@@ -1,0 +1,15 @@
+# PlatformIO build artifacts (regenerable)
+firmware/.pio/
+firmware/esp32_main/.pio/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+
+# Live capture/test logs (regenerable evidence; keep filenames in docs)
+logs/
+*.err
+ai/data/DATASET.zip
