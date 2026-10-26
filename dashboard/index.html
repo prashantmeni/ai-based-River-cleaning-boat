@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI River Cleaning Boat — Telemetry Dashboard</title>
+<style>
+  *{box-sizing:border-box} body{font-family:sans-serif;margin:0;background:#eef2f7;color:#1a2a3a}
+  .wrap{max-width:1000px;margin:0 auto;padding:16px}
+  header{background:#0b5ed6;color:#fff;padding:12px 16px;border-radius:8px 8px 0 0}
+  header h1{margin:0;font-size:1.2rem}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-top:12px}
+  .card{background:#fff;border:1px solid#d5dee8;border-radius:10px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .card h2{margin:0 0 10px;font-size:0.9rem;text-transform:uppercase;letter-spacing:.5px;color:#5b7189;border-bottom:1px solid#e9eef6;padding-bottom:6px}
+  .row{display:flex;justify-content:space-between;gap:10px;margin:6px 0}
+  .k{color:#6b7c8d;font-size:.85rem} .v{font-weight:700;font-size:1.05rem;color:#14304d}
+  .ok{color:#1e8e5a} .bad{color:#c0392b} .unk{color:#b28423}
+  .ctrl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:8px}
+  button{border:none;border-radius:6px;padding:8px 10px;font-size:0.85rem;cursor:pointer;background:#0b5ed6;color:#fff}
+  button:active{background:#084ca3}
+  button.secondary{background:#6b7c8d}
+  button.danger{background:#c0392b}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .note{font-size:.8rem;color:#6b7c8d;margin-top:6px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:.75rem;font-weight:700}
+  .badge-ok{background:#d9f7e6;color:#1e8e5a}.badge-bad{background:#fbe3e3;color:#c0392b}.badge-unk{background:#efe9d4;color:#b28423}
+  #connect{position:fixed;top:10px;right:10px;padding:6px 10px;border-radius:6px;font-size:.8rem}
+  #connect.on{background:#1e8e5a;color:#fff}#connect.off{background:#c0392b;color:#fff}
+</style>
+</head>
+<body>
+<header><h1>AI River Cleaning Boat — Telemetry Dashboard</h1></header>
+<div class="wrap">
+  <div id="connect" class="off">Disconnected</div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>A. Live Overview</h2>
+      <div class="row"><span class="k">Boat state</span><span id="s-state" class="v unk">UNKNOWN</span></div>
+      <div class="row"><span class="k">AI comms</span><span id="s-comms" class="v unk">UNKNOWN</span></div>
+      <div class="row"><span class="k">AI detection</span><span id="s-det" class="v unk">NO</span></div>
+      <div class="row"><span class="k">Target class</span><span id="s-class" class="v unk">-</span></div>
+      <div class="row"><span class="k">Confidence</span><span id="s-conf" class="v unk">-</span></div>
+      <div class="row"><span class="k">Target X (center-relative)</span><span id="s-cx" class="v unk">-</span></div>
+      <div class="row"><span class="k">Obstacle left</span><span id="s-left" class="v unk">- cm</span></div>
+      <div class="row"><span class="k">Obstacle right</span><span id="s-right" class="v unk">- cm</span></div>
+      <div class="row"><span class="k">GPS fix</span><span id="s-gps" class="v unk">NO FIX</span></div>
+      <div class="row"><span class="k">Lat / Lon</span><span id="s-pos" class="v unk">- / -</span></div>
+      <div class="row"><span class="k">Propulsion</span><span id="s-prop" class="v">L:0 R:0</span></div>
+      <div class="row"><span class="k">Conveyor</span><span id="s-conv" class="v unk">OFF</span></div>
+      <div class="row"><span class="k">Collections</span><span id="s-coll" class="v">0</span></div>
+      <div class="row"><span class="k">Faults</span><span id="s-fault" class="v ok">none</span></div>
+    </div>
+
+    <div class="card">
+      <h2>B. Camera &amp; AI</h2>
+      <div class="row"><span class="k">Inference status</span><span id="ai-inf" class="v unk">-</span></div>
+      <div class="row"><span class="k">Camera health</span><span id="ai-cam" class="v unk">-</span></div>
+      <div class="row"><span class="k">Last valid detection</span><span id="ai-age" class="v">-</span></div>
+      <div class="note">No live video stream is implemented. A real stream would
+         require a working MJPEG/HTTP camera feed; absence is shown honestly,
+         not faked.</div>
+    </div>
+
+    <div class="card">
+      <h2>C. Map (GPS)</h2>
+      <div id="map" style;height:160px;border:1px dashed#9fb0c3;border-radius:8px;background:#f4f7fa;color:#6b7c8d;display:flex;align-items:center;justify-content:center;font-size:.85rem>
+        GPS position not available
+      </div>
+      <div class="note">Map rendering is optional and requires internet. The boat
+         operates fully without it. No location is fabricated when there is no fix.</div>
+    </div>
+
+    <div class="card">
+      <h2>D. Telemetry</h2>
+      <div class="row"><span class="k">Controller uptime</span><span id="t-up" class="v">0 ms</span></div>
+      <div class="row"><span class="k">Motor L PWM / dir</span><span id="t-ml" class="v">0 / 0</span></div>
+      <div class="row"><span class="k">Motor R PWM / dir</span><span id="t-mr" class="v">0 / 0</span></div>
+      <div class="row"><span class="k">Comm health</span><span id="t-comm" class="v">-</span></div>
+      <div class="row"><span class="k">Conveyor state</span><span id="t-conv" class="v">OFF</span></div>
+      <div class="row"><span class="k">Fault flags</span><span id="t-fault" class="v">0x00</span></div>
+      <div class="row"><span class="k">Last update</span><span id="t-time" class="v">-</span></div>
+    </div>
+
+    <div class="card">
+      <h2>E. Manual Testing (bounded)</h2>
+      <div class="ctrl">
+        <button onclick="cmd(1)" class="danger">STOP</button>
+        <button onclick="cmd(2,120)">FORWARD</button>
+        <button onclick="cmd(3)">REVERSE*</button>
+      </div>
+      <div class="ctrl">
+        <button onclick="cmd(3,110)">TURN LEFT</button>
+        <button onclick="cmd(1)">HOLD</button>
+        <button onclick="cmd(4,110)">TURN RIGHT</button>
+      </div>
+      <div class="ctrl">
+        <button onclick="cmd(5,160)">CONVEYOR ON</button>
+        <button onclick="cmd(6)">CONVEYOR OFF</button>
+        <button></button>
+      </div>
+      <div class="ctrl">
+        <button onclick="cmd(7,0)">AUTO ON</button>
+        <button onclick="cmd(8,0)">AUTO OFF</button>
+        <button class="secondary" onclick="refresh()">REFRESH</button>
+      </div>
+      <div class="note">All motion commands auto-expire after ~1 s so a stale
+         dashboard can never keep motors running indefinitely. Reverse not yet
+         wired in firmware (*). Physical safety stays active regardless of dashboard.</div>
+    </div>
+
+    <div class="card">
+      <h2>F. Connectivity</h2>
+      <div class="row"><span class="k">Bridge</span><span id="f-bridge" class="v">starting...</span></div>
+      <div class="row"><span class="k">Serial port</span><span id="f-port" class="v">configured in bridge.py</span></div>
+      <div class="row"><span class="k">Mode</span><span class="v">Local serial &rarr; HTTP (localhost)</span></div>
+      <div class="note">The dashboard is monitoring only. The ESP32-CAM and main
+         ESP32 do not run conflicting network services. AI inference is local;
+         no internet or cloud API is used.</div>
+    </div>
+  </div>
+</div>
+<script>
+let cmdTimer;
+function cmd(c, v=120, d=1000){
+  fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({cmd:c,value:v,duration_ms:d})})
+  .then(r=>r.json()).then(d=>{console.log("cmd",d); if(d.error) alert("Command failed: "+d.error);});
+  if(cmdTimer)clearTimeout(cmdTimer);
+  cmdTimer=setTimeout(()=>{fetch("/api/command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cmd:1,value:0,duration_ms:0})});},1200);
+}
+function refresh(){fetchTelemetry();}
+function fmtMs(ms){if(ms==null)return"-";const s=Math.floor(ms/1000);return s+" s";}
+function fetchTelemetry(){
+  fetch("/api/telemetry").then(r=>r.json()).then(t=>{
+    const con=document.getElementById("connect");
+    const alive=t.comms_alive;
+    con.textContent=alive?"Connected":"Disconnected";
+    con.className=alive?"on":"off";
+    document.getElementById("s-state").textContent=t.state;
+    document.getElementById("s-comms").textContent=alive?"OK":"LOST";
+    document.getElementById("s-comms").className=alive?"v ok":"v bad";
+    document.getElementById("s-det").textContent=t.detection?"YES":"NO";
+    document.getElementById("s-det").className=t.detection?"v ok":"v";
+    document.getElementById("s-class").textContent=t.class_id;
+    document.getElementById("s-conf").textContent=t.confidence;
+    document.getElementById("s-cx").textContent=t.center_x;
+    document.getElementById("s-left").textContent=t.left_cm==null?"-":t.left_cm.toFixed(1);
+    document.getElementById("s-right").textContent=t.right_cm==null?"-":t.right_cm.toFixed(1);
+    document.getElementById("s-gps").textContent=t.gps_fix?"FIX":"NO FIX";
+    document.getElementById("s-gps").className=t.gps_fix?"v ok":"v bad";
+    document.getElementById("s-pos").textContent=t.latitude!=null&&t.longitude!=null?t.latitude.toFixed(5)+" / "+t.longitude.toFixed(5):"- / -";
+    document.getElementById("s-prop").textContent="L:"+t.left_pwm+" R:"+t.right_pwm;
+    document.getElementById("s-conv").textContent=t.conveyor;
+    document.getElementById("s-coll").textContent=t.collection_count;
+    document.getElementById("s-fault").textContent=t.fault_flags==0?"none":"0x"+t.fault_flags.toString(16);
+    document.getElementById("s-fault").className=t.fault_flags==0?"v ok":"v bad";
+    document.getElementById("t-up").textContent=fmtMs(t.uptime_ms);
+    document.getElementById("t-ml").textContent=t.left_pwm+" / "+(t.left_dir>0?"FWD":t.left_dir<0?"REV":"STP");
+    document.getElementById("t-mr").textContent=t.right_pwm+" / "+(t.right_dir>0?"FWD":t.right_dir<0?"REV":"STP");
+    document.getElementById("t-comm").textContent=t.comms_ok?"OK":"LOST";
+    document.getElementById("t-conv").textContent=t.conveyor;
+    document.getElementById("t-fault").textContent="0x"+(t.fault_flags||0).toString(16);
+    document.getElementById("t-time").textContent=new Date(t.last_update*1000).toLocaleTimeString();
+    const map=document.getElementById("map");
+    if(t.gps_fix&&t.latitude!=null){map.textContent="Lat "+t.latitude.toFixed(5)+", Lon "+t.longitude.toFixed(5);map.className="";map.style.background="#e3f7ee";}
+    else{map.textContent="GPS position not available";map.className="";map.style.background="#f4f7fa";}
+  }).catch(()=>{});
+}
+setInterval(fetchTelemetry,1000);
+fetchTelemetry();
+</script>
+</body>
+</html>

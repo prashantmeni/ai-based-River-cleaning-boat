@@ -1,0 +1,33 @@
+/* ========================================================================
+ * gitignore — AI-Based River Cleaning Boat
+ * ======================================================================== */
+
+# PlatformIO
+.pio/
+**/.pioenvs/**
+build/
+*.bin
+*.elf
+*.hex
+*.map
+
+# Arduino IDE
+.arduinoIDE/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model assets — large trained models are NOT committed by default.
+# Provide your own .tflite/.h under assets/model/ and add it via Git LFS if
+# you wish to version it.
+assets/model/*.tflite
+assets/model/*.h
+
+# Secrets / credentials
+*.env
+secrets.h
+secrets.cpp
+
+# Logs
+*.log
