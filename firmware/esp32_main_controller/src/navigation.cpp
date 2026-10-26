@@ -4,7 +4,7 @@
 #include "conveyor.h"
 #include "safety.h"
 #include "serial_rx.h"
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 Navigation::Navigation()
     : _motors(nullptr), _obs(nullptr), _conv(nullptr), _safety(nullptr),
@@ -237,7 +237,7 @@ void Navigation::update() {
             }
             break;
 
-        case NAV_TARGET_DETECTED:
+        case NAV_TARGET_DETECTED: {
             if (!_have_detection) {
                 transition(NAV_TARGET_LOST);
                 break;
@@ -252,6 +252,7 @@ void Navigation::update() {
             else if (cx < -STEERING_DEADBAND) transition(NAV_ALIGN);
             else transition(NAV_APPROACH);
             break;
+        }
 
         case NAV_ALIGN: {
             if (!_have_detection) { transition(NAV_TARGET_LOST); break; }
@@ -362,3 +363,4 @@ void Navigation::apply_motors_for_state() {
      * until next update. */
     (void)_motors;
 }
+

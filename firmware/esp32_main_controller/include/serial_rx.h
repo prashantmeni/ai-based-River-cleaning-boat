@@ -2,7 +2,7 @@
 #define SERIAL_RX_H
 
 #include <HardwareSerial.h>
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 /* Receiver for main controller <- ESP32-CAM serial link.
  * Feeds bytes one at a time; dispatches complete frames via callbacks.
@@ -42,3 +42,4 @@ private:
 };
 
 #endif /* SERIAL_RX_H */
+

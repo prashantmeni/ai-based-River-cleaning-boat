@@ -2,7 +2,7 @@
 #define TELEMETRY_H
 
 #include <Arduino.h>
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 /* Builds MAIN_STATUS telemetry payload and sends it back to the ESP32-CAM
  * (optional) / exposes fields for the dashboard. */
@@ -31,3 +31,4 @@ private:
 };
 
 #endif /* TELEMETRY_H */
+

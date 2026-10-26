@@ -2,7 +2,7 @@
 #define SERIAL_TX_H
 
 #include <HardwareSerial.h>
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 /* Transmitter for the ESP32-CAM -> main controller serial link.
  * Wraps protocol encoding and sends over a HardwareSerial port.
@@ -32,3 +32,4 @@ private:
 };
 
 #endif /* SERIAL_TX_H */
+

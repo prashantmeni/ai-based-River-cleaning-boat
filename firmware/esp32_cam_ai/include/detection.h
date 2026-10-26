@@ -2,7 +2,7 @@
 #define DETECTION_H
 
 #include <stdint.h>
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 #include "inference.h"
 
 /* Detection result after thresholding and temporal filtering. */
@@ -30,3 +30,4 @@ ai_no_detection_payload_t make_no_detection(uint8_t reason,
                                             uint8_t inference_status);
 
 #endif /* DETECTION_H */
+

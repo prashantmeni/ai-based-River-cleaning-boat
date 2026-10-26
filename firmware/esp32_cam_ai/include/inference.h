@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "ai_config.h"
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 /* Inference engine interface for the ESP32-CAM.
  *
@@ -36,3 +36,4 @@ private:
 };
 
 #endif /* INFERENCE_H */
+

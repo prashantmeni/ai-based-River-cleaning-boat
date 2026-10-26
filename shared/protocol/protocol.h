@@ -312,13 +312,34 @@ static inline int protocol_parse_ai_detection_payload(
     size_t i = 0;
     det->class_id = in[i++];
     det->confidence = in[i++];
-    det->bbox_x = (int16_t)((uint16_t)in[i++] | ((uint16_t)in[i++] << 8));
-    det->bbox_y = (int16_t)((uint16_t)in[i++] | ((uint16_t)in[i++] << 8));
-    det->bbox_w = (int16_t)((uint16_t)in[i++] | ((uint16_t)in[i++] << 8));
-    det->bbox_h = (int16_t)((uint16_t)in[i++] | ((uint16_t)in[i++] << 8));
-    det->center_x = (int16_t)((uint16_t)in[i++] | ((uint16_t)in[i++] << 8));
-    det->timestamp_ms = (uint32_t)in[i++] | ((uint32_t)in[i++] << 8) |
-                        ((uint32_t)in[i++] << 16) | ((uint32_t)in[i++] << 24);
+    {
+        uint16_t vx = (uint16_t)in[i] | ((uint16_t)in[i + 1] << 8);
+        i += 2;
+        det->bbox_x = (int16_t)vx;
+    }
+    {
+        uint16_t vy = (uint16_t)in[i] | ((uint16_t)in[i + 1] << 8);
+        i += 2;
+        det->bbox_y = (int16_t)vy;
+    }
+    {
+        uint16_t vw = (uint16_t)in[i] | ((uint16_t)in[i + 1] << 8);
+        i += 2;
+        det->bbox_w = (int16_t)vw;
+    }
+    {
+        uint16_t vh = (uint16_t)in[i] | ((uint16_t)in[i + 1] << 8);
+        i += 2;
+        det->bbox_h = (int16_t)vh;
+    }
+    {
+        uint16_t vcx = (uint16_t)in[i] | ((uint16_t)in[i + 1] << 8);
+        i += 2;
+        det->center_x = (int16_t)vcx;
+    }
+    det->timestamp_ms = (uint32_t)in[i] | ((uint32_t)in[i + 1] << 8) |
+                        ((uint32_t)in[i + 2] << 16) | ((uint32_t)in[i + 3] << 24);
+    i += 4;
     det->camera_health = in[i++];
     det->inference_status = in[i++];
     return 0;

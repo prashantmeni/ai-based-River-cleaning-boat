@@ -16,7 +16,7 @@
 #include "inference.h"
 #include "detection.h"
 #include "serial_tx.h"
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 static Camera g_camera;
 static Inference g_inference;
@@ -25,7 +25,6 @@ static SerialTx g_serial(CAM_UART_PORT);
 static uint16_t g_tx_seq = 0;
 static uint32_t g_last_inference_ms = 0;
 static uint32_t g_last_health_ms = 0;
-static uint8_t g_consec_detections = 0;
 
 static void print_status(const char *msg) {
     CAM_UART_PORT.print("[CAM] ");
@@ -126,3 +125,4 @@ void loop() {
     g_serial.flush();
     /* No blocking delay; loop runs as fast as the inference interval allows. */
 }
+

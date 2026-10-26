@@ -166,11 +166,21 @@ Created dashboard/ (index.html + bridge.py):
 
 ## 11. BUILD RESULTS
 
-**Not compiled.** No C/C++ toolchain or PlatformIO installation is available in
-this environment, so the ESP32 firmware could not be built or flashed. The
-platformio.ini files are written for the Arduino-ESP32 framework and must be
-compiled with `pio run` on a machine with PlatformIO. Host-side Python tests
-(test_protocol.py, test_navigation.py) pass.
+**Both firmwares compiled successfully** with PlatformIO + Arduino-ESP32 framework:
+
+| Controller | RAM | Flash | Status |
+|---|---|---|---|
+| ESP32 Main (Controller B) | 7.0% (22,808/327,680 B) | 24.9% (326,011/1,310,720 B) | OK |
+| ESP32-CAM (Controller A) | 13.3% (43,700/327,680 B) | 12.6% (396,185/3,145,728 B) | OK |
+
+Firmware binaries are generated at:
+- `firmware/esp32_main_controller/.pio/build/esp32dev/firmware.bin`
+- `firmware/esp32_cam_ai/.pio/build/esp32cam/firmware.bin`
+
+**Not flashed.** No physical hardware is available in this environment, so the
+.bin files were not uploaded to any device. Flashing requires:
+- ESP32-CAM: GPIO0 → GND, press Reset, then `pio run -t upload`
+- Standard ESP32: auto or BOOT button, then `pio run -t upload`
 
 ---
 

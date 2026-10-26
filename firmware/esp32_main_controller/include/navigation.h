@@ -2,7 +2,7 @@
 #define NAVIGATION_H
 
 #include <Arduino.h>
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 #include "boat_config.h"
 
 /* Navigation state machine states. */
@@ -89,3 +89,4 @@ private:
 };
 
 #endif /* NAVIGATION_H */
+

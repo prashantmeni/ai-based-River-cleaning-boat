@@ -6,7 +6,7 @@
 #include "serial_rx.h"
 #include "conveyor.h"
 #include "safety.h"
-#include "shared/protocol/protocol.h"
+#include "protocol.h"
 
 Telemetry::Telemetry() : _nav(nullptr), _motors(nullptr), _obs(nullptr),
                          _gps(nullptr), _rx(nullptr), _conv(nullptr),
@@ -65,3 +65,4 @@ void Telemetry::debug_print() const {
     }
     Serial.println();
 }
+
