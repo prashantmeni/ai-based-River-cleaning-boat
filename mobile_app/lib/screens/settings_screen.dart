@@ -19,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _duration = 600;
   bool _loaded = false;
   String _savedMsg = '';
+  bool _streamSaved = false;
   bool _obscurePass = true;
 
   @override
@@ -41,6 +42,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ssidCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _saveStreamUrl() async {
+    final s = AppSettings.instance;
+    s.cameraStreamUrl = _streamCtrl.text.trim();
+    await s.save();
+    setState(() => _streamSaved = true);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _streamSaved = false);
   }
 
   Future<void> _save() async {
@@ -160,6 +170,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
               ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _saveStreamUrl,
+                      icon: const Icon(Icons.save, size: 16),
+                      label: const Text('Apply Stream URL'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() => _streamCtrl.clear());
+                        _saveStreamUrl();
+                      },
+                      icon: const Icon(Icons.clear, size: 16),
+                      label: const Text('Clear'),
+                    ),
+                  ),
+                ],
+              ),
+              if (_streamSaved)
+                const Padding(
+                  padding: EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Stream URL saved.',
+                    style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontFamily: 'monospace'),
+                  ),
+                ),
             ],
           ),
         ),
