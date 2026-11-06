@@ -31,6 +31,7 @@
 #define MQTT_TELEMETRY_TOPIC       "riverclean/boat/telemetry"
 #define MQTT_COMMAND_TOPIC         "riverclean/boat/command"
 #define MQTT_ACK_TOPIC             "riverclean/boat/ack"
+#define MQTT_WIFI_CONFIG_TOPIC     "riverclean/boat/wifi_config"
 
 /* --- Motor driver: HW-095 (L298N dual H-bridge, 2 A/channel) ---
  * L298N interface: ENx = speed PWM (remove the ENA/ENB jumper caps!),

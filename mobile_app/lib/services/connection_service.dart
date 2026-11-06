@@ -324,6 +324,67 @@ class ConnectionService extends ChangeNotifier {
     }
   }
 
+  /// Publish a raw string payload to an arbitrary MQTT topic.
+  /// Used for Wi-Fi provisioning (riverclean/boat/wifi_config) and other
+  /// ad-hoc messages. Returns null on success, or an error string.
+  String? publishRaw(String topic, String payload) {
+    if (status != LinkStatus.online || _client == null) {
+      return 'Not connected';
+    }
+    final builder = MqttClientPayloadBuilder()..addString(payload);
+    try {
+      _client!.publishMessage(
+        topic,
+        MqttQos.atMostOnce,
+        builder.payload!,
+      );
+      notifyListeners();
+      return null;
+    } on Exception catch (e) {
+      return e.toString();
+    }
+  }
+
+  /// Auto-discover the ESP32-CAM MJPEG stream URL by scanning the local
+  /// /24 subnet for port 8080. Returns the stream URL (e.g.
+  /// http://192.168.31.188:8080/stream) or null if nothing is found.
+  Future<String?> discoverCamStreamUrl() async {
+    final interfaces = await NetworkInterface.list();
+    for (final iface in interfaces) {
+      for (final addr in iface.addresses) {
+        if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+          final ip = addr.address;
+          final parts = ip.split('.');
+          if (parts.length != 4) continue;
+          final subnet = '${parts[0]}.${parts[1]}.${parts[2]}.';
+          for (int batchStart = 1; batchStart < 255; batchStart += 20) {
+            final batchEnd = batchStart + 20 > 255 ? 255 : batchStart + 20;
+            final futures = <Future<String?>>[];
+            for (int i = batchStart; i < batchEnd; i++) {
+              futures.add(_probeStreamPort('$subnet$i'));
+            }
+            final results = await Future.wait(futures);
+            for (final r in results) {
+              if (r != null) return r;
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<String?> _probeStreamPort(String ip) async {
+    try {
+      final sock = await Socket.connect(ip, 8080)
+          .timeout(const Duration(milliseconds: 300));
+      await sock.close();
+      return 'http://$ip:8080/stream';
+    } on Exception {
+      return null;
+    }
+  }
+
   @override
   void dispose() {
     disconnect();

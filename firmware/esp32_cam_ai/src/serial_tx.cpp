@@ -1,12 +1,43 @@
 #include <WiFi.h>     /* explicit: lets LDF link the framework WiFi library */
 #include "serial_tx.h"
 #include "espnow_link.h"
+#include "protocol.h"
+
+static void (*s_wifi_config_cb)(const char *ssid, const char *password) = nullptr;
+
+static void espnow_recv_cb(const esp_now_recv_info_t *info,
+                           const uint8_t *data, int len) {
+    (void)info;
+    if (!data || len <= 0 || !s_wifi_config_cb) return;
+
+    /* Only handle WIFI_CONFIG frames (type byte at offset 2). */
+    if (data[2] != PROTOCOL_MSG_WIFI_CONFIG) return;
+
+    /* Payload starts at offset 7 (START+VER+TYPE+SEQ2+LEN2). */
+    const uint8_t *payload = data + 7;
+    size_t payload_len = (size_t)data[5] | ((size_t)data[6] << 8);
+    if (payload_len < 64) return;
+
+    char ssid[32] = "";
+    char pass[32] = "";
+    if (protocol_parse_wifi_config_payload(payload, payload_len,
+                                           ssid, pass, sizeof(ssid)) == 0) {
+        s_wifi_config_cb(ssid, pass);
+    }
+}
 
 SerialTx::SerialTx() : _link_ok(false), _tx_errors(0) {}
 
 bool SerialTx::begin() {
     _link_ok = espnow_link_begin();
+    if (_link_ok) {
+        esp_now_register_recv_cb(espnow_recv_cb);
+    }
     return _link_ok;
+}
+
+void SerialTx::set_wifi_config_callback(void (*cb)(const char *, const char *)) {
+    s_wifi_config_cb = cb;
 }
 
 bool SerialTx::_send_frame(uint8_t type, const uint8_t *payload,
@@ -18,8 +49,10 @@ bool SerialTx::_send_frame(uint8_t type, const uint8_t *payload,
     (*sequence)++;
     /* Follow Wi-Fi channel drift before transmitting (the CAM joins the
      * dashboard SoftAP, whose channel follows the router — IDFGH-17728).
-     * No receive callback exists on this board, so nothing to re-register. */
+     * Re-register the receive callback after resync since esp_now_deinit
+     * clears it. */
     espnow_link_resync();
+    esp_now_register_recv_cb(espnow_recv_cb);
     if (!espnow_link_send(_wire, (size_t)n)) {
         _tx_errors++;
         return false;

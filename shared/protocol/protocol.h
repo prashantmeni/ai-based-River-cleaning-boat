@@ -41,6 +41,7 @@ typedef enum {
     PROTOCOL_MSG_MAIN_STATUS       = 0x10,
     PROTOCOL_MSG_DIAG_COMMAND      = 0x20,
     PROTOCOL_MSG_FAULT_REPORT      = 0x30,
+    PROTOCOL_MSG_WIFI_CONFIG       = 0x40,
 } protocol_msg_type_t;
 
 /* -----------------------------------------------------------------------
@@ -118,6 +119,50 @@ typedef struct __attribute__((packed)) {
 #define DIAG_CMD_CONVEYOR_OFF     6
 #define DIAG_CMD_AUTONOMOUS_ON    7
 #define DIAG_CMD_AUTONOMOUS_OFF   8
+
+/* -----------------------------------------------------------------------
+ * Wi-Fi provisioning payload (PROTOCOL_MSG_WIFI_CONFIG)
+ * Sent main->CAM over ESP-NOW so both boards join the same router.
+ * ssid max 31 chars, password max 31 chars (null-terminated).
+ * ----------------------------------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    char ssid[32];
+    char password[32];
+} wifi_config_payload_t;
+
+#ifdef __cplusplus
+static inline size_t protocol_build_wifi_config_payload(
+        const char *ssid, const char *password, uint8_t *out) {
+    size_t i = 0;
+    size_t sl = strlen(ssid);
+    if (sl > 31) sl = 31;
+    memcpy(out + i, ssid, sl);
+    i += 32;  /* fixed 32-byte ssid field */
+    size_t pl = strlen(password);
+    if (pl > 31) pl = 31;
+    memcpy(out + i, password, pl);
+    i += 32;  /* fixed 32-byte password field */
+    return i; /* 64 bytes total */
+}
+
+static inline int protocol_parse_wifi_config_payload(
+        const uint8_t *in, size_t len, char *ssid_out, char *password_out,
+        size_t max_len) {
+    if (len < 64) return -1;
+    memcpy(ssid_out, in, 31);
+    ssid_out[31] = '\0';
+    memcpy(password_out, in + 32, 31);
+    password_out[31] = '\0';
+    /* null-terminate at first actual null if present */
+    for (size_t i = 0; i < 31; i++) {
+        if (ssid_out[i] == '\0') break;
+    }
+    for (size_t i = 0; i < 31; i++) {
+        if (password_out[i] == '\0') break;
+    }
+    return 0;
+}
+#endif
 
 /* -----------------------------------------------------------------------
  * Wire frame
@@ -254,7 +299,8 @@ static inline protocol_parse_result_t protocol_rx_push(protocol_rx_t *rx,
         type != PROTOCOL_MSG_AI_HEALTH &&
         type != PROTOCOL_MSG_MAIN_STATUS &&
         type != PROTOCOL_MSG_DIAG_COMMAND &&
-        type != PROTOCOL_MSG_FAULT_REPORT) {
+        type != PROTOCOL_MSG_FAULT_REPORT &&
+        type != PROTOCOL_MSG_WIFI_CONFIG) {
         rx->start_seen = 0;
         return PROTOCOL_PARSE_UNKNOWN_TYPE;
     }

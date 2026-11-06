@@ -70,6 +70,11 @@ static struct {
     unsigned int cmd;
 } s_pending_ack = {false, "", false, 0};
 
+/* Forward declarations for MQTT topic handlers defined below mqtt_callback. */
+static bool json_get_string(char *json, const char *key, char *out, size_t out_len);
+static void handle_mqtt_command(char* topic, byte* payload, unsigned int length);
+static void handle_mqtt_wifi_config(char* topic, byte* payload, unsigned int length);
+
 static void publish_mqtt_ack() {
     if (!s_pending_ack.pending || !s_mqtt_client.connected()) return;
     char ack[160];
@@ -94,9 +99,18 @@ static void publish_mqtt_ack() {
  * exactly like the WebSocket gateway accepts; every accepted or rejected
  * command is acked on MQTT_ACK_TOPIC so clients never see a false timeout. */
 static void mqtt_callback(char* topic, byte* payload, unsigned int length) {
-    if (strcmp(topic, MQTT_COMMAND_TOPIC) != 0) {
+    if (strcmp(topic, MQTT_COMMAND_TOPIC) == 0) {
+        handle_mqtt_command(topic, payload, length);
         return;
     }
+    if (strcmp(topic, MQTT_WIFI_CONFIG_TOPIC) == 0) {
+        handle_mqtt_wifi_config(topic, payload, length);
+        return;
+    }
+}
+
+static void handle_mqtt_command(char* topic, byte* payload, unsigned int length) {
+    (void)topic;
     char buf[96];
     unsigned int len = (length < sizeof(buf) - 1) ? length : (sizeof(buf) - 1);
     memcpy(buf, payload, len);
@@ -134,6 +148,72 @@ static void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     s_pending_ack.cmd = cmd;
 }
 
+/* Extract a quoted JSON string value for a key from a simple flat object.
+ * Example: {"ssid":"mywifi","password":"mypass"} -> out="mywifi" */
+static bool json_get_string(char *json, const char *key, char *out, size_t out_len) {
+    char search[48];
+    snprintf(search, sizeof(search), "\"%s\":\"", key);
+    char *p = strstr(json, search);
+    if (!p) return false;
+    p += strlen(search);
+    char *end = strchr(p, '"');
+    if (!end) return false;
+    size_t n = (size_t)(end - p);
+    if (n >= out_len) n = out_len - 1;
+    memcpy(out, p, n);
+    out[n] = '\0';
+    return true;
+}
+
+/* Handle Wi-Fi provisioning received over MQTT.
+ * Payload: {"ssid":"...","password":"..."}
+ * Reconnects STA to the new network and forwards the config to the CAM
+ * over ESP-NOW so both boards join the same router. */
+static void handle_mqtt_wifi_config(char* topic, byte* payload, unsigned int length) {
+    (void)topic;
+    char buf[192];
+    unsigned int len = (length < sizeof(buf) - 1) ? length : (sizeof(buf) - 1);
+    memcpy(buf, payload, len);
+    buf[len] = '\0';
+
+    Serial.print("[MQTT] Received Wi-Fi config: ");
+    Serial.println(buf);
+
+    char ssid[32] = "";
+    char pass[32] = "";
+    bool have_ssid = json_get_string(buf, "ssid", ssid, sizeof(ssid));
+    bool have_pass = json_get_string(buf, "password", pass, sizeof(pass));
+
+    if (!have_ssid || ssid[0] == '\0') {
+        Serial.println("[MQTT] Wi-Fi config rejected: missing ssid");
+        return;
+    }
+
+    /* Reconnect main board STA to the new network. */
+    Serial.print("[MAIN] Wi-Fi provisioning: connecting to SSID='");
+    Serial.print(ssid);
+    Serial.println("'");
+    WiFi.begin(ssid, pass);
+
+    /* Forward the config to the CAM over ESP-NOW so both boards stay on
+     * the same network. */
+    uint8_t wire[PROTOCOL_MAX_FRAME];
+    uint8_t wpayload[64];
+    size_t plen = protocol_build_wifi_config_payload(ssid, pass, wpayload);
+    int n = protocol_serialize_frame(PROTOCOL_MSG_WIFI_CONFIG, 0,
+                                     wpayload, (uint16_t)plen,
+                                     wire, sizeof(wire));
+    if (n > 0) {
+        if (espnow_link_send(wire, (size_t)n)) {
+            Serial.println("[MAIN] Wi-Fi config forwarded to CAM via ESP-NOW.");
+        } else {
+            Serial.println("[MAIN] Wi-Fi config ESP-NOW send failed.");
+        }
+    } else {
+        Serial.println("[MAIN] Wi-Fi config frame serialization failed.");
+    }
+}
+
 static void maintain_mqtt() {
     if (!s_mqtt_client.connected()) {
         if (millis() - s_last_mqtt_attempt_ms < 3000) return;
@@ -144,8 +224,11 @@ static void maintain_mqtt() {
         if (s_mqtt_client.connect(clientId.c_str())) {
             Serial.println(" connected!");
             s_mqtt_client.subscribe(MQTT_COMMAND_TOPIC);
+            s_mqtt_client.subscribe(MQTT_WIFI_CONFIG_TOPIC);
             Serial.print("[MQTT] Subscribed to topic: ");
             Serial.println(MQTT_COMMAND_TOPIC);
+            Serial.print("[MQTT] Subscribed to topic: ");
+            Serial.println(MQTT_WIFI_CONFIG_TOPIC);
         } else {
             Serial.print(" failed, rc=");
             Serial.print(s_mqtt_client.state());

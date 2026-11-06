@@ -36,6 +36,16 @@ static uint16_t g_tx_seq = 0;
 static uint32_t g_last_inference_ms = 0;
 static uint32_t g_last_health_ms = 0;
 
+/* Wi-Fi config received from the main controller over ESP-NOW.
+ * Reconnect STA to the provisioned network so both boards stay on the
+ * same router. The stream server keeps running on all interfaces. */
+static void on_wifi_config(const char *ssid, const char *password) {
+    Serial.print("[CAM] Wi-Fi config received: SSID='");
+    Serial.print(ssid);
+    Serial.println("'");
+    WiFi.begin(ssid, password);
+}
+
 static void print_status(const char *msg) {
     CAM_UART_PORT.print("[CAM] ");
     CAM_UART_PORT.println(msg);
@@ -113,6 +123,7 @@ void setup() {
         espnow_link_mac_str(mac, sizeof(mac));
         Serial.print("[CAM] esp-now link up mac=");
         Serial.println(mac);
+        g_serial.set_wifi_config_callback(on_wifi_config);
     } else {
         print_status("esp-now link FAILED");
     }

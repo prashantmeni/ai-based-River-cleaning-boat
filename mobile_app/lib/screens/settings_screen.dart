@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
 
 import '../services/app_settings.dart';
 import '../services/connection_service.dart';
@@ -21,6 +22,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _savedMsg = '';
   bool _streamSaved = false;
   bool _obscurePass = true;
+  bool _provisioning = false;
+  bool _discovering = false;
 
   @override
   void initState() {
@@ -67,6 +70,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await ConnectionService.instance.connect(s.endpoint);
     }
     setState(() => _savedMsg = 'Settings & Wi-Fi profile saved successfully.');
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _streamSaved = false);
+  }
+
+  Future<void> _provisionWifi() async {
+    final s = AppSettings.instance;
+    if (s.wifiSsid.isEmpty) {
+      setState(() => _savedMsg = 'Enter a Wi-Fi SSID first.');
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (mounted) setState(() => _savedMsg = '');
+      return;
+    }
+    setState(() => _provisioning = true);
+    final payload = jsonEncode({
+      'ssid': s.wifiSsid,
+      'password': s.wifiPassword,
+    });
+    final err = ConnectionService.instance.publishRaw(
+      'riverclean/boat/wifi_config',
+      payload,
+    );
+    if (err != null) {
+      setState(() => _savedMsg = 'Provisioning failed: $err');
+    } else {
+      setState(() => _savedMsg = 'Wi-Fi config sent to both boards.');
+    }
+    setState(() => _provisioning = false);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _savedMsg = '');
+  }
+
+  Future<void> _discoverStream() async {
+    setState(() => _discovering = true);
+    final found = await ConnectionService.instance.discoverCamStreamUrl();
+    if (found != null && mounted) {
+      setState(() {
+        _streamCtrl.text = found;
+        _savedMsg = 'CAM stream found: $found';
+      });
+    } else if (mounted) {
+      setState(() => _savedMsg = 'No CAM stream found on the local network.');
+    }
+    setState(() => _discovering = false);
     await Future<void>.delayed(const Duration(seconds: 2));
     if (mounted) setState(() => _savedMsg = '');
   }
@@ -183,12 +229,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        setState(() => _streamCtrl.clear());
-                        _saveStreamUrl();
-                      },
-                      icon: const Icon(Icons.clear, size: 16),
-                      label: const Text('Clear'),
+                      onPressed: _discovering ? null : _discoverStream,
+                      icon: _discovering
+                          ? const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.wifi, size: 16),
+                      label: Text(_discovering ? 'Detecting…' : 'Auto-Detect CAM Stream'),
                     ),
                   ),
                 ],
@@ -243,17 +291,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
               ),
               const SizedBox(height: 10),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Wi-Fi credentials saved. Stored in boat profile.')),
-                    );
-                  },
-                  icon: const Icon(Icons.router, size: 16),
-                  label: const Text('Sync Wi-Fi to Boat'),
-                ),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _provisioning ? null : _provisionWifi,
+                      icon: _provisioning
+                          ? const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.router, size: 16),
+                      label: Text(_provisioning ? 'Provisioning…' : 'Provision Wi-Fi to Both Boards'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        setState(() => _savedMsg = 'Credentials saved locally.');
+                      },
+                      icon: const Icon(Icons.save, size: 16),
+                      label: const Text('Save Locally'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
