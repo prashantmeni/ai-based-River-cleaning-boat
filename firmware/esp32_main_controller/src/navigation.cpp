@@ -13,7 +13,7 @@ Navigation::Navigation()
       _have_detection(false), _manual_end_ms(0),
       _manual_left_dir(0), _manual_left_pwm(0),
       _manual_right_dir(0), _manual_right_pwm(0),
-      _counted_class(0), _last_count_ms(0) {
+      _counted_class(0), _last_count_ms(0), _manual_active(false) {
     memset(&_last_detection, 0, sizeof(_last_detection));
     memset(_waste_counts, 0, sizeof(_waste_counts));
 }
@@ -50,20 +50,25 @@ void Navigation::transition(nav_state_t next) {
 }
 
 void Navigation::manual_stop() {
+    _manual_active = false;
     _manual_end_ms = 0;
     if (_motors) _motors->stop();
     if (_conv) _conv->stop();
 }
 
 void Navigation::manual_forward(uint8_t pwm, uint32_t duration_ms) {
-    _manual_end_ms = millis() + duration_ms;
+    _manual_active = true;
+    if (duration_ms > 0) _manual_end_ms = millis() + duration_ms;
+    else _manual_end_ms = 0;   /* continuous: runs until explicit STOP */
     _manual_left_dir = 1; _manual_left_pwm = pwm;
     _manual_right_dir = 1; _manual_right_pwm = pwm;
     _autonomous = false;
 }
 
 void Navigation::manual_turn(int8_t dir, uint8_t pwm, uint32_t duration_ms) {
-    _manual_end_ms = millis() + duration_ms;
+    _manual_active = true;
+    if (duration_ms > 0) _manual_end_ms = millis() + duration_ms;
+    else _manual_end_ms = 0;   /* continuous: runs until explicit STOP */
     if (dir > 0) { _manual_left_dir = 1; _manual_right_dir = -1; }
     else if (dir < 0) { _manual_left_dir = -1; _manual_right_dir = 1; }
     else { _manual_left_dir = 0; _manual_right_dir = 0; }
@@ -82,6 +87,7 @@ void Navigation::conveyor_off() {
 
 void Navigation::set_autonomous(bool on) {
     _autonomous = on;
+    _manual_active = false;
     _manual_end_ms = 0;
     if (!on && _motors) _motors->stop();
 }
@@ -147,21 +153,16 @@ void Navigation::on_diag_command(uint8_t cmd, uint8_t value, uint16_t duration_m
             if (value == 1 && _safety) _safety->emergency_stop();
             else if (value == 2 && _safety) _safety->clear_fault(0xFF);
             if (_motors) _motors->stop();
+            _manual_active = false;
             break;
         case DIAG_CMD_FORWARD:
-            _manual_left_dir = 1; _manual_left_pwm = value;
-            _manual_right_dir = 1; _manual_right_pwm = value;
-            if (_motors) _motors->forward(value);
+            manual_forward(value, duration_ms);
             break;
         case DIAG_CMD_TURN_LEFT:
-            _manual_left_dir = -1; _manual_left_pwm = value;
-            _manual_right_dir = 1; _manual_right_pwm = value;
-            if (_motors) _motors->turn_left(value);
+            manual_turn(-1, value, duration_ms);
             break;
         case DIAG_CMD_TURN_RIGHT:
-            _manual_left_dir = 1; _manual_left_pwm = value;
-            _manual_right_dir = -1; _manual_right_pwm = value;
-            if (_motors) _motors->turn_right(value);
+            manual_turn(1, value, duration_ms);
             break;
         case DIAG_CMD_CONVEYOR_ON:
             if (_conv) _conv->start_collection();
@@ -184,9 +185,12 @@ void Navigation::on_diag_command(uint8_t cmd, uint8_t value, uint16_t duration_m
 void Navigation::update() {
     uint32_t now = millis();
 
-    /* Manual command expiry: bounded, never indefinite. */
+    /* Manual command expiry: bounded commands time out; continuous
+     * commands (duration 0, _manual_end_ms == 0) stay active until a
+     * STOP clears _manual_active. */
     if (_manual_end_ms != 0 && now >= _manual_end_ms) {
         _manual_end_ms = 0;
+        _manual_active = false;
         if (_motors) _motors->stop();
         _autonomous = false;
     }
@@ -212,13 +216,15 @@ void Navigation::update() {
      * when frames resume. */
     if (_rx && _safety) _safety->set_comms_lost(!_rx->comms_alive());
 
-    /* Fatal faults (emergency / watchdog / comms loss) preempt everything.
-     * FAULT_SENSOR_BAD is advisory: it blocks autonomous motion via
-     * obstacle_stop above, but bounded manual commands still work so a
-     * stranded boat can be recovered if a sensor fails. */
+    /* Fatal faults preempt everything. Emergency stop and watchdog are
+     * hard faults. COMMS_LOST is still reported in telemetry/fault_flags
+     * (so the dashboard shows the link is down) but it does not latch
+     * safe-stop: an operator must still be able to drive the boat back
+     * manually when the CAM link is down. FAULT_SENSOR_BAD is advisory
+     * and only blocks autonomous motion (handled via obstacle_stop). */
     bool fatal = _safety &&
         (_safety->in_emergency() ||
-         (_safety->fault_flags() & (FAULT_WATCHDOG | FAULT_COMMS_LOST)) != 0);
+         (_safety->fault_flags() & FAULT_WATCHDOG) != 0);
     if (fatal) {
         if (_state != NAV_EMERGENCY_STOP && _state != NAV_FAULT) {
             transition(_safety->in_emergency() ? NAV_EMERGENCY_STOP : NAV_FAULT);
@@ -427,8 +433,14 @@ void Navigation::update() {
 }
 
 void Navigation::apply_motors_for_state() {
-    /* Manual override takes priority when active and not autonomous. */
-    if (_manual_end_ms != 0 && millis() < _manual_end_ms && !_autonomous) {
+    /* Manual override takes priority when active and not autonomous.
+     * duration_ms == 0 means continuous until an explicit STOP. */
+    if (_manual_active && !_autonomous) {
+        if (_manual_end_ms != 0 && millis() >= _manual_end_ms) {
+            _manual_active = false;
+            if (_motors) _motors->stop();
+            return;
+        }
         if (_motors) _motors->set_motors(_manual_left_dir, _manual_left_pwm,
                                          _manual_right_dir, _manual_right_pwm);
         return;

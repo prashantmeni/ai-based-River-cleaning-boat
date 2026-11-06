@@ -93,6 +93,9 @@ private:
     uint32_t _manual_end_ms;
     int8_t _manual_left_dir; uint8_t _manual_left_pwm;
     int8_t _manual_right_dir; uint8_t _manual_right_pwm;
+    bool   _manual_active;   /* true while a bounded or continuous manual
+                              * drive command is in effect (duration 0 =
+                              * continuous until explicit STOP). */
 
     uint16_t _waste_counts[4];
     uint8_t  _counted_class;
