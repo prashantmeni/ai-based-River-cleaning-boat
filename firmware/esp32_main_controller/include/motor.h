@@ -38,8 +38,8 @@ public:
     uint8_t last_right_pwm() const { return _last_right_pwm; }
 
 private:
-    void apply(int8_t dir, uint8_t pwm, uint8_t pwm_gpio, uint8_t dir_gpio,
-               bool invert);
+    void apply(int8_t dir, uint8_t pwm, uint8_t ena_gpio,
+               uint8_t in_a_gpio, uint8_t in_b_gpio, bool invert);
     bool _enabled;
     int8_t _last_left_dir, _last_right_dir;
     uint8_t _last_left_pwm, _last_right_pwm;

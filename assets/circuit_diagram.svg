@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .box { fill: #1e293b; stroke: #38bdf8; stroke-width: 2; rx: 8px; }
+      .box-green { fill: #1e293b; stroke: #4ade80; stroke-width: 2; rx: 8px; }
+      .box-orange { fill: #1e293b; stroke: #fb923c; stroke-width: 2; rx: 8px; }
+      .title { fill: #f8fafc; font-family: monospace; font-size: 20px; font-weight: bold; }
+      .subtitle { fill: #94a3b8; font-family: monospace; font-size: 12px; }
+      .label { fill: #e2e8f0; font-family: monospace; font-size: 13px; }
+      .pin { fill: #38bdf8; font-family: monospace; font-size: 11px; }
+      .wire-power { stroke: #ef4444; stroke-width: 3; fill: none; }
+      .wire-gnd { stroke: #3b82f6; stroke-width: 3; fill: none; }
+      .wire-signal { stroke: #22c55e; stroke-width: 2; fill: none; }
+      .wire-i2c { stroke: #eab308; stroke-width: 2; fill: none; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="900" class="bg"/>
+
+  <!-- Title banner -->
+  <text x="40" y="45" class="title">RIVER CLEANING BOAT — MAIN SYSTEM WIRING DIAGRAM</text>
+  <text x="40" y="70" class="subtitle">Authoritative schematic mapping firmware pin definitions (boat_config.h) &amp; physical connections</text>
+
+  <!-- Power Distribution Block -->
+  <g transform="translate(40, 100)">
+    <rect width="260" height="220" class="box-orange"/>
+    <text x="20" y="30" class="title" fill="#fb923c">POWER SYSTEM</text>
+    <text x="20" y="60" class="label">Li-ion Battery Pack (12V)</text>
+    <text x="20" y="90" class="label">├── Main Fuse &amp; Switch</text>
+    <text x="20" y="120" class="label">├── Driver VMOT (12V)</text>
+    <text x="20" y="150" class="label">└── Buck Converter (5V)</text>
+    <text x="40" y="180" class="pin">   └── 5V Out &amp; Common GND</text>
+  </g>
+
+  <!-- Main ESP32 Controller -->
+  <g transform="translate(450, 100)">
+    <rect width="320" height="740" class="box"/>
+    <text x="30" y="35" class="title">ESP32 MAIN CONTROLLER</text>
+    <text x="30" y="55" class="subtitle">ESP32-WROOM-32 DevKit</text>
+
+    <!-- Pin list -->
+    <text x="20" y="100" class="pin">GPIO 25 ───&gt; Motor Driver 1 (ENA - Left PWM)</text>
+    <text x="20" y="130" class="pin">GPIO 26 ───&gt; Motor Driver 1 (IN1)</text>
+    <text x="20" y="160" class="pin">GPIO 16 ───&gt; Motor Driver 1 (IN2)</text>
+    <text x="20" y="190" class="pin">GPIO 27 ───&gt; Motor Driver 1 (ENB - Right PWM)</text>
+    <text x="20" y="220" class="pin">GPIO 14 ───&gt; Motor Driver 1 (IN3)</text>
+    <text x="20" y="250" class="pin">GPIO 19 ───&gt; Motor Driver 1 (IN4)</text>
+
+    <text x="20" y="300" class="pin">GPIO 23 ───&gt; Motor Driver 2 (Conveyor PWM)</text>
+    <text x="20" y="330" class="pin">GPIO 22 ───&gt; Motor Driver 2 (IN1 = HIGH)</text>
+    <text x="20" y="360" class="pin">GPIO 21 ───&gt; Motor Driver 2 (IN2 = LOW)</text>
+
+    <text x="20" y="410" class="pin">GPIO 32 &lt;--- Ultrasonic Left Trig</text>
+    <text x="20" y="440" class="pin">GPIO 33 ---&gt; Ultrasonic Left Echo (via 1k/2k)</text>
+    <text x="20" y="470" class="pin">GPIO 13 &lt;--- Ultrasonic Right Trig</text>
+    <text x="20" y="500" class="pin">GPIO 15 ---&gt; Ultrasonic Right Echo (via 1k/2k)</text>
+
+    <text x="20" y="550" class="pin">GPIO 34 &lt;--- TDS Meter (Analog OUT, 0-2.3V)</text>
+    <text x="20" y="580" class="pin">GPIO 4  &lt;--- GPS NEO-6M (TX -> RX4, 9600 baud)</text>
+
+    <text x="20" y="630" class="pin">GPIO 17 ---&gt; Red LED (Not Ready)</text>
+    <text x="20" y="660" class="pin">GPIO 18 ---&gt; Green LED (Ready)</text>
+    <text x="20" y="690" class="pin">GPIO 2  ---&gt; Blue LED (WiFi/Cloud Status)</text>
+    <text x="20" y="720" class="pin">GPIO 5  ---&gt; Buzzer (Connect Beep)</text>
+  </g>
+
+  <!-- Motor Drivers -->
+  <g transform="translate(850, 100)">
+    <rect width="300" height="340" class="box-green"/>
+    <text x="20" y="35" class="title" fill="#4ade80">MOTOR DRIVER 1 (L298N)</text>
+    <text x="20" y="60" class="label">Propulsion (Left &amp; Right Motors)</text>
+    <text x="20" y="95" class="pin">VMOT &lt;-- 12V Battery</text>
+    <text x="20" y="125" class="pin">GND  &lt;-- Common Ground</text>
+    <text x="20" y="155" class="pin">ENA  &lt;-- GPIO 25 (PWM)</text>
+    <text x="20" y="185" class="pin">IN1/2 &lt;-- GPIO 26, 16</text>
+    <text x="20" y="215" class="pin">ENB  &lt;-- GPIO 27 (PWM)</text>
+    <text x="20" y="245" class="pin">IN3/4 &lt;-- GPIO 14, 19</text>
+    <text x="20" y="280" class="pin">OUT1-4 --&gt; DC Drive Motors</text>
+  </g>
+
+  <g transform="translate(850, 480)">
+    <rect width="300" height="260" class="box-green"/>
+    <text x="20" y="35" class="title" fill="#4ade80">MOTOR DRIVER 2 (HW-095)</text>
+    <text x="20" y="60" class="label">Conveyor Mechanism</text>
+    <text x="20" y="95" class="pin">VMOT &lt;-- 12V Battery</text>
+    <text x="20" y="125" class="pin">GND  &lt;-- Common Ground</text>
+    <text x="20" y="155" class="pin">EN   &lt;-- GPIO 23 (PWM)</text>
+    <text x="20" y="185" class="pin">IN1/2 &lt;-- GPIO 22 (HIGH), 21 (LOW)</text>
+    <text x="20" y="220" class="pin">OUT  --&gt; Conveyor Motor</text>
+  </g>
+
+  <!-- Sensors & Peripherals block on left -->
+  <g transform="translate(40, 360)">
+    <rect width="360" height="480" class="box"/>
+    <text x="20" y="35" class="title">SENSORS &amp; PERIPHERALS</text>
+    
+    <text x="20" y="75" class="label" font-weight="bold">Ultrasonic Left (HC-SR04):</text>
+    <text x="20" y="95" class="pin">VCC: 5V, GND: Common, Trig: GPIO32, Echo: GPIO33</text>
+
+    <text x="20" y="135" class="label" font-weight="bold">Ultrasonic Right (HC-SR04):</text>
+    <text x="20" y="155" class="pin">VCC: 5V, GND: Common, Trig: GPIO13, Echo: GPIO15</text>
+    <text x="20" y="180" class="pin" fill="#fb923c">*(Echo pins use 1kΩ / 2kΩ voltage dividers to 3.3V)*</text>
+
+    <text x="20" y="225" class="label" font-weight="bold">GPS Module (NEO-6M):</text>
+    <text x="20" y="245" class="pin">VCC: 3.3V/5V, GND: Common, TX: GPIO4 (9600 baud)</text>
+
+    <text x="20" y="290" class="label" font-weight="bold">TDS Meter (DFRobot SEN0244):</text>
+    <text x="20" y="310" class="pin">VCC: 3.3V, GND: Common, OUT: GPIO34 (ADC1_CH6)</text>
+
+    <text x="20" y="355" class="label" font-weight="bold">Status Indicators &amp; ESP32-CAM:</text>
+    <text x="20" y="375" class="pin">Red LED (GPIO17) | Green LED (GPIO18)</text>
+    <text x="20" y="395" class="pin">Blue LED (GPIO2)  | Buzzer (GPIO5)</text>
+    <text x="20" y="415" class="pin">ESP32-CAM (AI-Thinker): Wireless ESP-NOW (Ch 1)</text>
+  </g>
+
+  <!-- Footer note -->
+  <text x="40" y="875" class="subtitle" fill="#38bdf8">NOTE: All grounds (Battery negative, Buck output GND, Motor Driver GNDs, Sensor GNDs) must be tied together at a single common ground point.</text>
+</svg>

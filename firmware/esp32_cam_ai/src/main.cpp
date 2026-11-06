@@ -1,15 +1,23 @@
 /* ========================================================================
  * ESP32-CAM AI vision unit — main entry point.
  *
- * Captures camera frames, preprocesses for the (placeholder) TinyML model,
- * runs inference locally, applies confidence + temporal filtering, and
- * transmits structured detection/no-detection/health messages over UART
- * to the main ESP32 controller.
+ * Captures camera frames, preprocesses them to 96x96 grayscale, runs the
+ * on-device computer-vision detector (blob segmentation + shape-based
+ * classification), applies confidence + temporal filtering, and transmits
+ * structured detection/no-detection/health messages over ESP-NOW to the
+ * main ESP32 controller.
  *
- * No inference runs on the main controller. No network is used.
+ * Also joins the site router (or the dashboard SoftAP / a fallback AP)
+ * for time sync / diagnostics. There is NO video stream: detections and
+ * health only.
+ *
+ * No inference runs on the main controller.
  * ======================================================================== */
 
 #include <Arduino.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#include <WiFi.h>
 #include "ai_config.h"
 #include "camera.h"
 #include "preprocess.h"
@@ -17,10 +25,11 @@
 #include "detection.h"
 #include "serial_tx.h"
 #include "protocol.h"
+#include "espnow_link.h"
 
 static Camera g_camera;
 static Inference g_inference;
-static SerialTx g_serial(CAM_UART_PORT);
+static SerialTx g_serial;
 
 static uint16_t g_tx_seq = 0;
 static uint32_t g_last_inference_ms = 0;
@@ -31,12 +40,57 @@ static void print_status(const char *msg) {
     CAM_UART_PORT.println(msg);
 }
 
+/* Join the site router first, then the main controller's SoftAP, then
+ * start a local fallback AP. ESP-NOW was already started and follows the
+ * active channel. Wi-Fi is kept only for network presence — detections
+ * travel over ESP-NOW. */
+static bool try_join(const char *ssid, const char *pass, uint32_t timeout_ms) {
+    WiFi.begin(ssid, pass);
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - t0 < timeout_ms) {
+        delay(250);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.disconnect();
+        return false;
+    }
+    Serial.print("[CAM] joined '");
+    Serial.print(ssid);
+    Serial.print("' ip=");
+    Serial.println(WiFi.localIP());
+    return true;
+}
+
+static void network_bringup() {
+    WiFi.setAutoReconnect(true);
+    bool joined = try_join(CAM_ROUTER_SSID, CAM_ROUTER_PASS,
+                           CAM_ROUTER_TIMEOUT_MS);
+    if (!joined) {
+        joined = try_join(CAM_STA_SSID, CAM_STA_PASS, CAM_STA_TIMEOUT_MS);
+    }
+
+    if (!joined) {
+        Serial.print("[CAM] no STA found — fallback AP '"
+                     CAM_FALLBACK_AP_SSID "'");
+        if (WiFi.softAP(CAM_FALLBACK_AP_SSID, CAM_FALLBACK_AP_PASS,
+                        ESPNOW_CHANNEL, 0, 4)) {
+            Serial.print(" ip=");
+            Serial.println(WiFi.softAPIP());
+        } else {
+            print_status("fallback AP FAILED — offline, ESP-NOW still active");
+            return;
+        }
+    }
+}
+
 void setup() {
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Disable brownout detector
+
     pinMode(STATUS_LED_GPIO, OUTPUT);
     digitalWrite(STATUS_LED_GPIO, LOW);
 
     CAM_UART_PORT.begin(CAM_UART_BAUD);
-    while (!CAM_UART_PORT) { /* wait for serial */ }
     print_status("booting ESP32-CAM AI vision unit");
 
     /* Camera init. If it fails, keep reporting camera_health != 0. */
@@ -46,15 +100,23 @@ void setup() {
         print_status("camera initialized");
     }
 
-    /* Inference / model load. Expect failure until a model is provided. */
+    /* On-device CV detector (no model file required). */
     if (!g_inference.begin()) {
-        print_status("model not loaded (expected until assets/model/ provided)");
+        print_status("CV detector FAILED to start");
     } else {
-        print_status("model loaded");
+        print_status("CV detector ready (blob + shape classifier)");
     }
 
-    g_serial.begin(CAM_UART_BAUD);
-    print_status("serial link started");
+    if (g_serial.begin()) {
+        char mac[20];
+        espnow_link_mac_str(mac, sizeof(mac));
+        Serial.print("[CAM] esp-now link up mac=");
+        Serial.println(mac);
+    } else {
+        print_status("esp-now link FAILED");
+    }
+
+    network_bringup();
 }
 
 void loop() {

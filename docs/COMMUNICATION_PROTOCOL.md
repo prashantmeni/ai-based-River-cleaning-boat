@@ -2,18 +2,20 @@
 
 **Project:** AI-Based River Cleaning Boat  
 **Link:** ESP32-CAM (AI vision unit) <-> standard ESP32 (main control unit)  
-**Physical layer:** UART (TTL serial, 3.3 V logic)  
-**Baud rate:** 115200 bps (configurable)  
+**Physical layer:** ESP-NOW wireless (2.4 GHz, channel 1, broadcast, no router)  
+**Transport:** one protocol frame per ESP-NOW datagram (frames <= 73 bytes, datagram limit 250)  
 **Document:** docs/COMMUNICATION_PROTOCOL.md  
-**Header:** shared/protocol/protocol.h
+**Header:** shared/protocol/protocol.h  
+**Link helpers:** shared/protocol/espnow_link.h
 
 ---
 
 ## 1. OVERVIEW
 
-The two microcontrollers communicate over a single UART connection. The
-ESP32-CAM is the **sender of AI detection messages**; the standard ESP32 is
-the **receiver and actuator controller**. Both sides may send status/fault
+The two microcontrollers communicate over a wireless ESP-NOW link (no
+router, no pairing, no wires between the boards). The ESP32-CAM is the
+**sender of AI detection messages**; the standard ESP32 is the
+**receiver and actuator controller**. Both sides may send status/fault
 messages.
 
 The protocol is deliberately small and dependency-free so it compiles on both
@@ -28,21 +30,33 @@ Key design goals:
 
 ---
 
-## 2. PHYSICAL CONNECTION
+## 2. PHYSICAL LAYER (ESP-NOW)
 
-| Signal | ESP32-CAM | Standard ESP32 | Notes |
-|---|---|---|---|
-| TX | GPIO1 (UART0 TX) | GPIO3 (UART0 RX) | CAM TX -> MAIN RX |
-| RX | GPIO3 (UART0 RX) | GPIO1 (UART0 TX) | MAIN TX -> CAM RX |
-| GND | GND | GND | Common ground required |
-| VCC | 5 V (from buck) | 5 V (from buck) | Separate regulators OK if grounds tied |
+| Property | Value |
+|---|---|
+| Radio | ESP-NOW (2.4 GHz Wi-Fi radio, no AP/router needed for the link itself) |
+| Channel | 1 on both boards at boot (set with `esp_wifi_set_channel`); re-homed by `espnow_link_resync()` when a STA join moves the radio (see below) |
+| Addressing | Broadcast `FF:FF:FF:FF:FF:FF` (no MAC configuration) |
+| Encryption | None (trusted local link on the hull) |
+| Modem sleep | Disabled (`WiFi.setSleep(false)`) |
+| Payload limit | 250 bytes/datagram — each frame travels as one datagram |
+| Inter-board wires | **None** — only each board's own power |
 
-Logic levels: both ESP32s are 3.3 V, so no level shifter is needed between
-them. Do **not** connect 5 V UART devices directly to an ESP32 GPIO.
+UART0 on each board is used **only for local debug output / flashing**
+(CAM: `[CAM]` prints on its USB adapter; MAIN: JSON telemetry + dashboard
+commands on the USB port). No signal wire exists between the boards, so
+neither board's boot-strapping pins are affected by the link.
 
-Pin numbers are **planned values** and must be verified in
-docs/PIN_MAPPING.md before wiring. UART0 on the ESP32-CAM is shared with the
-programmer/Serial bootloader; flashing the CAM requires GPIO0 held low.
+**Channel following:** the link needs no router, but if a board's STA joins
+one (the CAM for video — cascade in `network_bringup()`, or the main board's
+STA mode), the radio moves to the router's channel. `espnow_link_resync()`
+detects the mismatch (`get_channel != s_home_ch`, throttled to 1/s), re-homes
+ESP-NOW to the new channel, and logs one
+`[ESPNOW] channel X -> Y, link rebuilt` line — verified live when the router
+moved from channel 1 to 6 with reception continuing (`comms_ok` stayed true).
+
+Board power: each ESP32 is powered from the 5 V buck; grounds should
+still be common across the hull for sensor/motor logic.
 
 ---
 
@@ -62,7 +76,7 @@ Offset  Field             Size    Description
 8+N     END_BYTE          1       0x7F (frame end)
 ```
 
-Maximum payload: 64 bytes. Maximum frame: 71 bytes.
+Maximum payload: 64 bytes. Maximum frame: 73 bytes (9 bytes overhead).
 
 ### Checksum
 The checksum is an 8-bit additive checksum over every byte from VERSION
@@ -111,6 +125,11 @@ is never interpreted as a detection.
 
 `center_x` is the value the main controller uses for differential steering:
 negative = target left of centre, positive = target right of centre.
+
+Note: with no trained model present, `class_id`/`confidence` come from the
+on-device CV shape heuristic (`inference.cpp`, see docs/AI_MODEL.md §2) —
+best-effort labels, honestly measured confidence. The frame format and
+thresholds are model-agnostic.
 
 ### 5.2 AI_NO_DETECTION (0x02) — 9 bytes
 
@@ -181,13 +200,55 @@ Payload: fault code bitmask.
 |---|---|
 | Bad checksum | Drop frame, increment error counter, keep previous state |
 | Bad length / unknown type | Drop frame, do not act on payload |
-| UART silence > timeout | Mark AI comms lost, stop target-seeking, safe stop |
+| Link silence > timeout | Mark AI comms lost, stop target-seeking, safe stop |
 | ESP32-CAM reboot | Sequence resets; main controller resyncs on next valid frame |
 | Main controller reboot | Re-initialise all outputs to OFF before enabling anything |
 
 ---
 
-## 9. SOURCE
+## 9. CLOUD MQTT COMMAND + ACK PATH (dashboard / app)
+
+The laptop dashboard and phone app reach the main controller over the public
+cloud MQTT path (HiveMQ WSS). This is separate from the ESP-NOW link above.
+
+| Topic | Direction | Payload |
+|---|---|---|
+| `riverclean/boat/telemetry` | MAIN -> broker | telemetry JSON (§5 equivalent, same schema as USB) |
+| `riverclean/boat/command` | client -> broker -> MAIN | command text (below) |
+| `riverclean/boat/ack` | MAIN -> broker | ack JSON (below) |
+
+**Command text** — both forms are accepted (identical semantics to the
+WebSocket gateway):
+
+```
+CMD:<cmd>,<value>,<duration_ms>            # plain (Flutter app)
+#<id> CMD:<cmd>,<value>,<duration_ms>      # with correlation id (dashboard)
+```
+
+`<cmd>` must be `DIAG_CMD_STOP(1)`..`DIAG_CMD_AUTONOMOUS_OFF(8)`.
+Anything else is rejected but still acked, so clients never hang.
+
+**Ack JSON** (published for every accepted *and* rejected command):
+
+```json
+{"type":"ack","id":"cWEB1","status":"ok","cmd":1}
+{"type":"ack","id":"cWEB2","status":"rejected","cmd":99,"reason":"invalid command"}
+```
+
+The id is echoed verbatim (empty string when the payload had no `#id`
+prefix). The ack is built inside the PubSubClient callback but published from
+`maintain_mqtt()` after `loop()` returns (PubSubClient publish is not
+re-entrant safe inside its own callback).
+
+**Verified live:** `#cWEB1 CMD:1,0,0` -> ok ack (this exact form silently
+failed before the fix — the callback required the payload to start with
+`CMD:` and the dashboard never received acks, showing a false timeout);
+garbage payload and out-of-range cmd -> rejected ack with reason; plain
+`CMD:1,0,0` -> ok ack.
+
+---
+
+## 10. SOURCE
 
 - Message structures and wire encoding: `shared/protocol/protocol.h`
 - ESP32-CAM transmitter: `firmware/esp32_cam_ai/src/`

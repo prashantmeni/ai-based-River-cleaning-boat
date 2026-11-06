@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-bg text-t-primary antialiased;
+}
+
+@layer components {
+  .panel {
+    @apply bg-card border border-t-border rounded-xl shadow-panel;
+  }
+  .panel-elevated {
+    @apply bg-elevated border border-t-border rounded-xl shadow-panel;
+  }
+  .pill {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-bg hover:bg-accent/90;
+  }
+  .btn-secondary {
+    @apply btn bg-elevated text-t-primary border border-t-border hover:border-secondary/60;
+  }
+  .btn-danger {
+    @apply btn bg-critical text-white hover:bg-critical/90 focus-visible:outline-critical;
+  }
+  .btn-warning {
+    @apply btn bg-warning text-bg hover:bg-warning/90 focus-visible:outline-warning;
+  }
+}
+
+.leaflet-container {
+  background: #0d1524;
+  font: inherit;
+}

@@ -41,18 +41,22 @@ TARGET_LOST --(timeout)--> SEARCH or IDLE
 * --(obstacle too close)--> OBSTACLE_AVOIDANCE
 OBSTACLE_AVOIDANCE --(clear)--> previous state
 * --(comms lost / fault / e-stop)--> FAULT / EMERGENCY_STOP
+* --(autonomy off: AUTO OFF / manual cmd / manual expiry)--> IDLE
 ```
 
 Obstacle avoidance preempts nearly all motion states. Communication loss
-preempts target-tracking states.
+preempts target-tracking states. Turning autonomy off leaves any
+autonomous-only state immediately (motors stop in IDLE).
 
 ## 3. STATE BEHAVIOURS
 
 ### SEARCH
-- Run camera/UART reception.
+- Run camera reception over the ESP-NOW link (ESP32-CAM sends frames).
 - Wait for fresh, valid detections.
 - Slow search motion within safe limits (optional).
 - Do not drive motors if safety checks fail.
+- Stop immediately when `comms_alive` is false (link lost).
+- Exit to IDLE the moment autonomy is turned off.
 
 ### TARGET_DETECTED
 - Validate confidence >= threshold.
@@ -120,7 +124,7 @@ preempts target-tracking states.
 | OBSTACLE_STOP_CM | 15 |
 | COMMS_TIMEOUT_MS | 2000 |
 
-All in `shared/configuration/` (create `boat_config.h` before build).
+All in `firmware/esp32_main_controller/include/boat_config.h`.
 
 ## 5. SAFE DEFAULTS
 

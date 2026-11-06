@@ -57,7 +57,13 @@ Camera::~Camera() {
 }
 
 bool Camera::begin() {
+    /* Wake up the camera: drive PWDN LOW (active-high power-down). */
+    pinMode(CAM_PIN_PWDN, OUTPUT);
+    digitalWrite(CAM_PIN_PWDN, LOW);
+    delay(10);
+
     esp_err_t err = esp_camera_init(&_config);
+
     if (err != ESP_OK) {
         snprintf(_last_error, sizeof(_last_error),
                  "camera init failed 0x%X", (unsigned)err);

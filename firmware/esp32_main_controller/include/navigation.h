@@ -66,6 +66,13 @@ public:
     int16_t detection_center_x() const { return _last_detection.center_x; }
     uint8_t detection_class() const { return _last_detection.class_id; }
 
+    /* Per-class waste counts (1=bottle, 2=bag, 3=debris). Incremented once
+     * per distinct accepted detection (class change, or same class reseen
+     * after a long gap) so a static object in frame counts as one item. */
+    uint16_t waste_count(uint8_t class_id) const {
+        return class_id < 4 ? _waste_counts[class_id] : 0;
+    }
+
 private:
     void transition(nav_state_t next);
     void apply_motors_for_state();
@@ -86,6 +93,10 @@ private:
     uint32_t _manual_end_ms;
     int8_t _manual_left_dir; uint8_t _manual_left_pwm;
     int8_t _manual_right_dir; uint8_t _manual_right_pwm;
+
+    uint16_t _waste_counts[4];
+    uint8_t  _counted_class;
+    uint32_t _last_count_ms;
 };
 
 #endif /* NAVIGATION_H */

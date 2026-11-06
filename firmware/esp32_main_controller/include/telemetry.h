@@ -12,7 +12,7 @@ public:
     void attach(class Navigation *nav, class MotorDriver *motors,
                 class ObstacleSensors *obs, class GPS *gps,
                 class SerialRx *rx, class Conveyor *conv,
-                class Safety *safety);
+                class Safety *safety, class TdsSensor *tds);
 
     /* Encode a MAIN_STATUS frame into the wire buffer. Returns bytes. */
     int build_status_frame(uint8_t *out, size_t out_size, uint16_t *sequence);
@@ -28,6 +28,7 @@ private:
     class SerialRx *_rx;
     class Conveyor *_conv;
     class Safety *_safety;
+    class TdsSensor *_tds;
 };
 
 #endif /* TELEMETRY_H */

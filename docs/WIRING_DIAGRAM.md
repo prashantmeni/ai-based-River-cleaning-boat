@@ -23,47 +23,51 @@ power-up. This diagram reflects the pin assignments in docs/PIN_MAPPING.md.
                       +--------------------+   |   +--------------------+
                       |                        |                        |
                       v                        v                        v
-              +---------------+      +---------------+      +---------------+
-              | ESP32-CAM     |      | ESP32 MAIN    |      | Ultrasonic L  |
-              | (3.3 V logic) |      | (3.3 V logic) |      | VCC 5 V       |
-              | VCC <- 5 V    |      | VCC <- 5 V    |      | GND ----------+-- Common GND
-              | GND ----------+------| GND ----------+------| Trig -> GPIO32|
-              |               |      |               |      | Echo -> div -> GPIO33
-              | GPIO1 TX -------+----| GPIO3 RX      |      |               |
-              | GPIO3 RX <-----------+ GPIO1 TX      |      +---------------+
-              |               |      |               |
+               +---------------+      +---------------+      +---------------+
+               | ESP32-CAM     |      | ESP32 MAIN    |      | Ultrasonic L  |
+               | (3.3 V logic) |      | (3.3 V logic) |      | VCC 5 V       |
+               | VCC <- 5 V    |      | VCC <- 5 V    |      | GND ----------+-- Common GND
+               | GND ----------+------| GND ----------+------| Trig -> GPIO32|
+               |               |      |               |      | Echo -> div -> GPIO33
+               |      ESP-NOW wireless link (2.4 GHz ch.1)    |               |
+               |      NO signal wires between boards         +---------------+
+               |               |      |               |
               |               |      +---------------+
               |               |         |   |   |   |
               |               |         v   v   v   v
-              |               |   +---------------+
-              |               |   | Motor Driver  |
-              |               |   | (dual channel)|
-              |               |   | VMOT <- bat   |
-              |               |   | VCC <- 5 V    |
-              |               |   | GND ----------+-- Common GND
-              |               |   | L_PWM <- GPIO25 |
-              |               |   | L_DIR <- GPIO26 |
-              |               |   | R_PWM <- GPIO27 |
-              |               |   | R_DIR <- GPIO14 |
-              |               |   | STBY  <- GPIO12 |
-              |               |   |               |
-              |               |   | L_Motor       | R_Motor
-              |               |   | (propulsion)  | (propulsion)
-              |               |   +---------------+
+               |               |   +---------------+
+               |               |   | Motor Driver  |
+               |               |   | HW-095 (L298N)|
+               |               |   | +12V <- bat   |
+               |               |   | 5V  <- logic  |
+               |               |   | GND ----------+-- Common GND
+               |               |   | ENA <- GPIO25 |
+               |               |   | IN1 <- GPIO26 |
+               |               |   | IN2 <- GPIO12 |
+               |               |   | ENB <- GPIO27 |
+               |               |   | IN3 <- GPIO14 |
+               |               |   | IN4 <- GPIO19 |
+               |               |   |               |
+               |               |   | L_Motor       | R_Motor
+               |               |   | (propulsion)  | (propulsion)
+               |               |   +---------------+
               |               |
               |               |   +---------------+
-              |               |   | Conveyor Motor|
-              |               |   | PWM <- GPIO14 |
-              |               |   | DIR <- GPIO27 |
-              |               |   +---------------+
-              |               |         |   |   |
-              |               |         v   v   v
-              |               |   +---------------+
-              |               |   | GPS Module    |
-              |               |   | VCC <- 5 V    |
-              |               |   | TX -> GPIO16  |
-              |               |   | RX <- GPIO17  |
-              |               |   | GND ----------+
+               |               |   | 2nd HW-095    |
+               |               |   | (conveyor)    |
+               |               |   | EN  <- GPIO23 |
+               |               |   | IN1 <- GPIO22 |
+               |               |   | IN2 <- GPIO21 |
+               |               |   | OUT -> Conveyor Motor
+               |               |   +---------------+
+               |               |         |   |   |
+               |               |         v   v   v
+               |               |   +---------------+
+               |               |   | GPS Module    |
+               |               |   | VCC <- 5 V    |
+               |               |   | TX -> GPIO4   |
+               |               |   | RX (not wired)|
+               |               |   | GND ----------+
               |               |   +---------------+
               |               |
               |               v
@@ -78,6 +82,9 @@ Legend:
 - `->` = signal output from ESP32
 - `<-` = signal input to ESP32
 - `div` = 1 kΩ + 2 kΩ voltage divider on 5 V Echo to 3.3 V
+- The ESP32-CAM <-> MAIN link is **ESP-NOW wireless**: power each board
+  from the 5 V buck (common ground), but run **no signal wires** between
+  them. UART0 on each board is only for USB flashing/debug.
 
 ---
 
@@ -99,9 +106,9 @@ Result at GPIO ≈ 5 V × 2 kΩ / (1 kΩ + 2 kΩ) ≈ 3.3 V. Safe for ESP32.
 
 | Item | Why unverified |
 |---|---|
-| Motor driver logic voltage (3.3 V vs 5 V) | Driver model unknown |
-| Motor VMOT voltage vs battery voltage | Battery cell count unknown |
-| Conveyor needs separate driver? | Only one dual-channel driver purchased; conveyor motor needs its own driver or shared channel — not yet resolved |
+| Motor VMOT voltage vs battery voltage | Battery cell count unknown (HW-095 accepts 5–35 V) |
+| Motor stall current vs 2 A/channel | Motors unknown — L298N has no current limiting |
+| Conveyor driver | Resolved — second HW-095 board owned (channel used for conveyor) |
 | GPS baud rate | Module unknown |
 | Buck converter current for motors + ESP32s | Converter rating unknown |
 
@@ -115,5 +122,5 @@ and the driver/motor datasheets.
 - One common ground for all logic (ESP32s, driver logic, sensors).
 - Motor high-current return runs directly to battery negative.
 - Fuse and main switch on the battery positive rail, before the buck.
-- Keep motor wiring away from the UART and GPS signal wires.
+- Keep motor wiring away from the GPS signal wire (GPIO4).
 - Keep batteries and electronics above the waterline in a sealed enclosure.

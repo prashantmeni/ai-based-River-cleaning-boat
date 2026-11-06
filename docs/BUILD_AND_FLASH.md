@@ -48,7 +48,8 @@ To enable real detection:
 ```
 firmware/esp32_cam_ai/      Controller A — AI vision (ESP32-CAM)
 firmware/esp32_main_controller/  Controller B — navigation & control (ESP32)
-shared/protocol/protocol.h  Shared framed serial protocol
+shared/protocol/protocol.h  Shared framed protocol
+shared/protocol/espnow_link.h  Shared ESP-NOW transport helpers
 dashboard/                  index.html + bridge.py (telemetry dashboard)
 tests/                      Host-side Python tests
 docs/                       All documentation
@@ -106,14 +107,15 @@ Baud: 115200 for both controllers.
 
 ## 9. TESTING COMMUNICATION BETWEEN CONTROLLERS
 
-1. Flash both firmwares.
-2. Connect ESP32-CAM GPIO1 (TX) -> main ESP32 GPIO3 (RX).
-   Connect ESP32-CAM GPIO3 (RX) -> main ESP32 GPIO1 (TX).
-   Connect GND to GND.
+1. Flash both firmwares (both must be the ESP-NOW build).
+2. **No signal wires between the boards** — power each from the 5 V buck
+   (common ground recommended).
 3. Open two serial monitors (one per controller) at 115200 baud.
-4. You should see the ESP32-CAM send AI_NO_DETECTION / AI_HEALTH frames and the
-   main ESP32 reply with MAIN_STATUS frames.
-5. Communication loss (disconnect UART) must make the main controller report
+4. CAM prints `[CAM] esp-now link up mac=...`; main prints
+   `[MAIN] esp-now link ready mac=...` and then JSON telemetry lines.
+5. `GET http://localhost:8080/api/telemetry` must show `comms_ok: true`
+   with `rx_bytes` climbing and `rx_errors: 0`.
+6. Power off the CAM (link loss): the main controller must report
    `comms_ok=false` and stop motors.
 
 ## 10. CONFIGURING WI-FI FOR DASHBOARD MONITORING (OPTIONAL)
@@ -130,10 +132,13 @@ python dashboard/bridge.py --port COM3 --baud 115200 --http-port 8080
 ```
 Then open `http://localhost:8080`.
 
-No Wi-Fi is configured on the ESP32s by default, so the two controllers never
-create conflicting network configurations. If you later add ESP32 Web Server
-or ESP-NOW, configure only the main controller as an access point and keep the
-ESP32-CAM offline.
+The ESP-NOW inter-board link needs no access point: it runs directly on
+channel 1 (broadcast). The CAM optionally joins a router
+(`CAM_ROUTER_SSID` in `firmware/esp32_cam_ai/include/ai_config.h`) for
+network presence only — **there is no video stream**; detections and health
+travel over ESP-NOW to the main controller, which publishes telemetry over
+cloud MQTT. The CAM cascades to the boat AP and then to its own
+`RiverClean-CAM` fallback AP if the router is absent.
 
 ## 11. RECOVERING FROM COMMON FLASHING FAILURES
 

@@ -19,15 +19,12 @@
 | Qty | Component | Role | Est. cost (₹) | Verified? |
 |---|---|---|---|---|
 | 2 | DC gear motors | Propulsion (left/right) | ~300 | No |
-| 1 | Dual-channel motor driver (e.g., L298N / L298D / TB6612) | Propulsion motor control | ~150 | No |
+| 1 | Dual-channel motor driver — **HW-095 (L298N, 2 A/channel)** | Propulsion motor control | ~150 | Yes |
 | 2 | Low-speed DC geared motors | Conveyor belt drive | ~300 | No |
-| 1 | Motor driver for conveyor (if not shared) | Conveyor motor control | ~150 | No (may not be owned) |
+| 1 | Second motor driver — **HW-095 (L298N)** | Conveyor motor control | ~150 | Yes (owned) |
 
-> NOTE: A dual-channel driver has only two channels. Two propulsion motors use
-> both channels. A conveyor motor requires a THIRD channel or a separate
-> driver. If no separate driver is owned, the conveyor cannot be driven
-> independently — document this and either buy a cheap driver (e.g. L9110S,
-> ~₹60) or omit conveyor automation for the first prototype.
+> NOTE: Two HW-095 boards are owned. Board 1 drives both propulsion motors
+> (channels A/B); board 2 drives the conveyor (one channel used).
 
 ## 3. SENSORS
 
@@ -35,6 +32,12 @@
 |---|---|---|---|---|
 | 2 | Ultrasonic distance modules (e.g., HC-SR04) | Obstacle avoidance (L/R) | ~200 | No |
 | 1 | GPS module (e.g., NEO-6M / NEO-M8N) | Position telemetry | ~300 | No |
+| 1 | Analog TDS meter — **DFRobot Gravity SEN0244** (0–2.3 V out, 3.3 V supply) | Water TDS telemetry (ADC1 GPIO34) | ~1000 | No |
+
+> TDS note: the SEN0244 output is 3.3 V-safe and wires straight to GPIO34.
+> A 0–5 V TDS sensor **must not** — ESP32 pins are not 5 V tolerant; use a
+> 1 kΩ/2 kΩ divider first (see docs/PIN_MAPPING.md).
+> Not used: a servo was considered and deliberately left out of the build.
 
 ## 4. ACTUATORS / INDICATORS
 
@@ -71,7 +74,7 @@ Within the ₹3,000–₹6,000 budget if built with scrap hull and minimal parts
 
 ## 8. UNVERIFIED / MISSING SPECIFICATIONS
 
-- Motor driver model and current rating (critical for motor safety)
+- Motor stall current (driver identified: HW-095 / L298N, 2 A/channel)
 - DC gear motor nominal voltage and stall current
 - Ultrasonic module model and Echo voltage (level-shifting decision)
 - GPS module model and baud rate

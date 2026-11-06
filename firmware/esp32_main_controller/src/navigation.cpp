@@ -12,8 +12,10 @@ Navigation::Navigation()
       _state_enter_ms(0), _last_detection_ms(0), _consec_detections(0),
       _have_detection(false), _manual_end_ms(0),
       _manual_left_dir(0), _manual_left_pwm(0),
-      _manual_right_dir(0), _manual_right_pwm(0) {
+      _manual_right_dir(0), _manual_right_pwm(0),
+      _counted_class(0), _last_count_ms(0) {
     memset(&_last_detection, 0, sizeof(_last_detection));
+    memset(_waste_counts, 0, sizeof(_waste_counts));
 }
 
 Navigation::~Navigation() {}
@@ -86,12 +88,31 @@ void Navigation::set_autonomous(bool on) {
 
 void Navigation::on_detection(const ai_detection_payload_t *det) {
     if (!det) return;
+    uint32_t now = millis();
+    /* Gap since the previous detection frame: large gap = the object
+     * left the view (or the link dropped) → a later sighting of the
+     * same class counts as a new item. */
+    uint32_t gap = _last_detection_ms ? (now - _last_detection_ms)
+                                      : 0xFFFFFFFFu;
     _last_detection = *det;
-    _last_detection_ms = millis();
+    _last_detection_ms = now;
     _have_detection = true;
     if (det->confidence >= CONFIDENCE_THRESHOLD &&
         det->inference_status == INF_STATUS_OK) {
         _consec_detections++;
+
+        /* Per-class waste counting: accepted detections only. */
+        uint8_t cls = det->class_id;
+        if (cls >= 1 && cls <= 3) {
+            bool new_item = (cls != _counted_class) ||
+                            (gap >= WASTE_GAP_RECOUNT_MS);
+            bool cooled = (now - _last_count_ms) >= WASTE_COUNT_COOLDOWN_MS;
+            if (new_item && cooled && _waste_counts[cls] < 0xFFFF) {
+                _waste_counts[cls]++;
+                _counted_class = cls;
+                _last_count_ms = now;
+            }
+        }
     } else {
         _consec_detections = 0;
     }
@@ -109,16 +130,22 @@ void Navigation::on_health(const ai_health_payload_t *h) {
 }
 
 void Navigation::on_diag_command(uint8_t cmd, uint8_t value, uint16_t duration_ms) {
-    /* All dashboard commands are bounded: a duration of 0 defaults to a
-     * short timeout so motors never run indefinitely. */
-    if (duration_ms == 0) duration_ms = 1000;
+    /* If duration_ms == 0, run continuously until explicit stop command. */
     _autonomous = false;
-    _manual_end_ms = millis() + duration_ms;
+    if (duration_ms == 0) {
+        _manual_end_ms = 0;
+    } else {
+        _manual_end_ms = millis() + duration_ms;
+    }
     _manual_left_dir = 0; _manual_left_pwm = 0;
     _manual_right_dir = 0; _manual_right_pwm = 0;
 
     switch (cmd) {
         case DIAG_CMD_STOP:
+            /* value=0 plain stop; value=1 remote E-STOP latch (firmware
+             * enforced: NAV_EMERGENCY_STOP until cleared); value=2 clear. */
+            if (value == 1 && _safety) _safety->emergency_stop();
+            else if (value == 2 && _safety) _safety->clear_fault(0xFF);
             if (_motors) _motors->stop();
             break;
         case DIAG_CMD_FORWARD:
@@ -164,9 +191,35 @@ void Navigation::update() {
         _autonomous = false;
     }
 
-    /* Safety faults preempt everything except emergency stop. */
-    if (_safety && (_safety->in_emergency() ||
-                    _safety->fault_flags() != 0)) {
+    /* Obstacle assessment runs every cycle, even during faults, so a
+     * sensor can re-validate after a transient failure (otherwise the
+     * fault would latch forever). */
+    bool obstacle_stop = false;
+    if (_obs) {
+        _obs->read();
+        if (_obs->any_invalid()) {
+            obstacle_stop = true;   /* don't move blindly on bad sensors */
+            if (_safety) _safety->set_sensors_bad(true);
+        } else {
+            if (_safety) _safety->set_sensors_bad(false);
+            if (_obs->both_blocked()) obstacle_stop = true;
+        }
+    }
+
+    /* Comms-loss becomes a latched fault bit so the fatal preemption below
+     * forces NAV_FAULT (motors/conveyor off) — matches the documented
+     * "communication loss => safe stop" behaviour. Clears automatically
+     * when frames resume. */
+    if (_rx && _safety) _safety->set_comms_lost(!_rx->comms_alive());
+
+    /* Fatal faults (emergency / watchdog / comms loss) preempt everything.
+     * FAULT_SENSOR_BAD is advisory: it blocks autonomous motion via
+     * obstacle_stop above, but bounded manual commands still work so a
+     * stranded boat can be recovered if a sensor fails. */
+    bool fatal = _safety &&
+        (_safety->in_emergency() ||
+         (_safety->fault_flags() & (FAULT_WATCHDOG | FAULT_COMMS_LOST)) != 0);
+    if (fatal) {
         if (_state != NAV_EMERGENCY_STOP && _state != NAV_FAULT) {
             transition(_safety->in_emergency() ? NAV_EMERGENCY_STOP : NAV_FAULT);
         }
@@ -174,6 +227,35 @@ void Navigation::update() {
         if (_conv) _conv->stop();
         if (_rx) _rx->update(); /* keep draining serial */
         return;
+    }
+
+    /* Recoverable fault state: leave it once faults have cleared. */
+    if (_state == NAV_FAULT && _safety && _safety->fault_flags() == 0) {
+        transition(NAV_IDLE);
+    }
+    /* Emergency latch released (remote reset or clear_fault): recover. */
+    if (_state == NAV_EMERGENCY_STOP && _safety && !_safety->in_emergency()) {
+        transition(NAV_IDLE);
+    }
+
+    /* Autonomy turned off (AUTO OFF, manual command, or manual expiry):
+     * leave autonomous-only states immediately so the boat never keeps
+     * searching/driving under stale autonomy. NAV_IDLE stops motors. */
+    if (!_autonomous) {
+        switch (_state) {
+            case NAV_SEARCH:
+            case NAV_TARGET_DETECTED:
+            case NAV_ALIGN:
+            case NAV_APPROACH:
+            case NAV_COLLECT:
+            case NAV_VERIFY_COLLECT:
+            case NAV_TARGET_LOST:
+            case NAV_OBSTACLE_AVOID:
+                transition(NAV_IDLE);
+                break;
+            default:
+                break;
+        }
     }
 
     /* Always drain incoming AI serial messages (non-blocking). */
@@ -191,19 +273,6 @@ void Navigation::update() {
     if (_have_detection &&
         (now - _last_detection_ms > DETECTION_FRESHNESS_MS)) {
         _have_detection = false;
-    }
-
-    /* Obstacle assessment (only if sensors valid). */
-    bool obstacle_stop = false;
-    if (_obs) {
-        _obs->read();
-        if (_obs->any_invalid()) {
-            obstacle_stop = true;   /* don't move blindly on bad sensors */
-            if (_safety) _safety->set_sensors_bad(true);
-        } else {
-            if (_safety) _safety->set_sensors_bad(false);
-            if (_obs->both_blocked()) obstacle_stop = true;
-        }
     }
 
     /* --- State machine --- */
@@ -224,7 +293,13 @@ void Navigation::update() {
             break;
 
         case NAV_SEARCH:
-            if (!comms_ok || !_have_detection) {
+            if (!comms_ok) {
+                /* Link lost: hold position, do not keep spinning. */
+                if (_motors) _motors->stop();
+                if (_conv) _conv->stop();
+                break;
+            }
+            if (!_have_detection) {
                 /* Safe search: slow turn or hold position. */
                 if (_motors && !obstacle_stop) _motors->turn_left(SEARCH_SPEED_PWM);
                 else if (_motors) _motors->stop();

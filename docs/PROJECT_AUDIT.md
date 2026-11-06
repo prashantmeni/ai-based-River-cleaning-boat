@@ -57,7 +57,7 @@ None from this repository. The only reusable inputs are the **hardware component
 - AI-Thinker ESP32-CAM with OV2640 camera
 - ESP32-CAM programmer module
 - Standard ESP32 development board
-- Dual-channel motor driver (model to be confirmed)
+- Dual-channel motor driver (**HW-095 / L298N**, confirmed)
 - 2 × DC gear motors (propulsion)
 - 2 × low-speed DC geared motors (conveyor)
 - Conveyor belts
@@ -146,11 +146,11 @@ No model exists, so no conversion is possible yet. When a model is added, the re
 | Connection | Status |
 |---|---|
 | ESP32-CAM ↔ OV2640 camera | Fixed onboard (AI-Thinker pinout), no user wiring |
-| ESP32-CAM ↔ Main ESP32 UART | **To be defined** (PIN_MAPPING.md) |
-| Main ESP32 ↔ motor driver | **To be defined** (driver model unknown) |
+| ESP32-CAM ↔ Main ESP32 | **ESP-NOW wireless** (ch. 1, no signal wires) |
+| Main ESP32 ↔ motor driver | **Defined** — HW-095 (L298N): ENA/IN1/IN2/ENB/IN3/IN4 (PIN_MAPPING.md) |
 | Main ESP32 ↔ ultrasonic sensors | **To be defined** (5 V echo level shifting required) |
 | Main ESP32 ↔ GPS module | **To be defined** (UART) |
-| Main ESP32 ↔ conveyor motor | **To be defined** (separate driver may be required) |
+| Main ESP32 ↔ conveyor motor | **Defined** — 2nd HW-095 (L298N): EN=GPIO23, IN1=GPIO22, IN2=GPIO21 |
 | Main ESP32 ↔ buzzer | **To be defined** |
 | Power distribution / buck converter | **To be defined** |
 
@@ -162,12 +162,11 @@ All pin assignments are documented in `docs/PIN_MAPPING.md` and must be verified
 
 The following are unknown and must be verified before hardware is energized:
 
-1. Dual-channel motor driver model and current rating.
-2. DC gear motor nominal voltage, stall current, and no-load current.
-3. Ultrasonic sensor model (echo voltage — likely 5 V, requires level shifting to 3.3 V ESP32).
-4. GPS module model and baud rate.
-5. Battery cell count / nominal voltage and whether a protection BMS is present.
-6. Whether the 5 V buck converter can supply motors + ESP32s simultaneously.
+1. DC gear motor nominal voltage, stall current, and no-load current (driver is HW-095/L298N, 2 A/channel — stall must stay below that).
+2. Ultrasonic sensor model (echo voltage — likely 5 V, requires level shifting to 3.3 V ESP32).
+3. GPS module model and baud rate.
+4. Battery cell count / nominal voltage and whether a protection BMS is present.
+5. Whether the 5 V buck converter can supply motors + ESP32s simultaneously.
 
 None of these are assumed. `docs/COMPONENT_LIST.md` and `docs/PIN_MAPPING.md` mark every unverified value as `TODO (verify)`.
 

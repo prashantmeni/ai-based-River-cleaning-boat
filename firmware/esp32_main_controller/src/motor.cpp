@@ -7,31 +7,45 @@ MotorDriver::MotorDriver()
 MotorDriver::~MotorDriver() { disable(); }
 
 bool MotorDriver::begin() {
-    pinMode(MOTOR_LEFT_PWM_GPIO, OUTPUT);
-    pinMode(MOTOR_LEFT_DIR_GPIO, OUTPUT);
-    pinMode(MOTOR_RIGHT_PWM_GPIO, OUTPUT);
-    pinMode(MOTOR_RIGHT_DIR_GPIO, OUTPUT);
-    pinMode(MOTOR_STBY_GPIO, OUTPUT);
+    pinMode(MOTOR_LEFT_ENA_GPIO, OUTPUT);
+    pinMode(MOTOR_LEFT_IN1_GPIO, OUTPUT);
+    pinMode(MOTOR_LEFT_IN2_GPIO, OUTPUT);
+    pinMode(MOTOR_RIGHT_ENB_GPIO, OUTPUT);
+    pinMode(MOTOR_RIGHT_IN3_GPIO, OUTPUT);
+    pinMode(MOTOR_RIGHT_IN4_GPIO, OUTPUT);
 
-    /* Safe default: standby off, all outputs low. */
-    digitalWrite(MOTOR_STBY_GPIO, LOW);
-    analogWrite(MOTOR_LEFT_PWM_GPIO, 0);
-    analogWrite(MOTOR_RIGHT_PWM_GPIO, 0);
+    /* Safe default: enables low (outputs off), inputs low. */
+    analogWrite(MOTOR_LEFT_ENA_GPIO, 0);
+    analogWrite(MOTOR_RIGHT_ENB_GPIO, 0);
+    digitalWrite(MOTOR_LEFT_IN1_GPIO, LOW);
+    digitalWrite(MOTOR_LEFT_IN2_GPIO, LOW);
+    digitalWrite(MOTOR_RIGHT_IN3_GPIO, LOW);
+    digitalWrite(MOTOR_RIGHT_IN4_GPIO, LOW);
 
     /* Only enable after successful init. */
     _enabled = true;
-    digitalWrite(MOTOR_STBY_GPIO, HIGH);
     stop();
     return true;
 }
 
-void MotorDriver::apply(int8_t dir, uint8_t pwm, uint8_t pwm_gpio,
-                        uint8_t dir_gpio, bool invert) {
-    if (!_enabled) { pwm = 0; }
+/* L298N (HW-095) channel: IN_A/IN_B select direction, ENA carries PWM.
+ * dir  1 -> IN_A=1 IN_B=0 (forward)
+ * dir -1 -> IN_A=0 IN_B=1 (reverse)
+ * dir  0 -> ENA=0 (outputs high-Z, coast) + inputs low. */
+void MotorDriver::apply(int8_t dir, uint8_t pwm, uint8_t ena_gpio,
+                        uint8_t in_a_gpio, uint8_t in_b_gpio, bool invert) {
+    if (!_enabled) { pwm = 0; dir = 0; }
+    if (dir == 0) {
+        analogWrite(ena_gpio, 0);
+        digitalWrite(in_a_gpio, LOW);
+        digitalWrite(in_b_gpio, LOW);
+        return;
+    }
     bool forward = (dir > 0);
     if (invert) forward = !forward;
-    digitalWrite(dir_gpio, forward ? HIGH : LOW);
-    analogWrite(pwm_gpio, (dir == 0) ? 0 : pwm);
+    digitalWrite(in_a_gpio, forward ? HIGH : LOW);
+    digitalWrite(in_b_gpio, forward ? LOW : HIGH);
+    analogWrite(ena_gpio, pwm);
 }
 
 void MotorDriver::set_motors(int8_t left_dir, uint8_t left_pwm,
@@ -41,10 +55,10 @@ void MotorDriver::set_motors(int8_t left_dir, uint8_t left_pwm,
     _last_right_dir = right_dir;
     _last_left_pwm = (left_dir == 0) ? 0 : left_pwm;
     _last_right_pwm = (right_dir == 0) ? 0 : right_pwm;
-    apply(left_dir, left_pwm, MOTOR_LEFT_PWM_GPIO, MOTOR_LEFT_DIR_GPIO,
-          MOTOR_LEFT_INVERT != 0);
-    apply(right_dir, right_pwm, MOTOR_RIGHT_PWM_GPIO, MOTOR_RIGHT_DIR_GPIO,
-          MOTOR_RIGHT_INVERT != 0);
+    apply(left_dir, left_pwm, MOTOR_LEFT_ENA_GPIO, MOTOR_LEFT_IN1_GPIO,
+          MOTOR_LEFT_IN2_GPIO, MOTOR_LEFT_INVERT != 0);
+    apply(right_dir, right_pwm, MOTOR_RIGHT_ENB_GPIO, MOTOR_RIGHT_IN3_GPIO,
+          MOTOR_RIGHT_IN4_GPIO, MOTOR_RIGHT_INVERT != 0);
 }
 
 void MotorDriver::forward(uint8_t pwm) {
@@ -64,11 +78,12 @@ void MotorDriver::stop() {
 }
 void MotorDriver::disable() {
     _enabled = false;
-    digitalWrite(MOTOR_STBY_GPIO, LOW);
-    analogWrite(MOTOR_LEFT_PWM_GPIO, 0);
-    analogWrite(MOTOR_RIGHT_PWM_GPIO, 0);
-    digitalWrite(MOTOR_LEFT_DIR_GPIO, LOW);
-    digitalWrite(MOTOR_RIGHT_DIR_GPIO, LOW);
+    analogWrite(MOTOR_LEFT_ENA_GPIO, 0);
+    analogWrite(MOTOR_RIGHT_ENB_GPIO, 0);
+    digitalWrite(MOTOR_LEFT_IN1_GPIO, LOW);
+    digitalWrite(MOTOR_LEFT_IN2_GPIO, LOW);
+    digitalWrite(MOTOR_RIGHT_IN3_GPIO, LOW);
+    digitalWrite(MOTOR_RIGHT_IN4_GPIO, LOW);
     _last_left_dir = _last_right_dir = 0;
     _last_left_pwm = _last_right_pwm = 0;
 }

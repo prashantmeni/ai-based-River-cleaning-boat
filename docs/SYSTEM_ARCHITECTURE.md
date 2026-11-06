@@ -10,17 +10,17 @@ docs/COMMUNICATION_PROTOCOL.md, docs/AI_MODEL.md, docs/STATE_MACHINE.md
 ## 1. HIGH-LEVEL DIAGRAM
 
 ```
-   [ESP32-CAM: AI Vision Unit]  UART  [ESP32: Main Control Unit]
+   [ESP32-CAM: AI Vision Unit] ESP-NOW  [ESP32: Main Control Unit]
    ---------------------------   ---   -------------------------
    OV2640 camera                          Dual motor driver
    TinyML inference                       2x DC gear motors
-   Structured serial output               Ultrasonic L/R
-                                          GPS module
-                                           Conveyor motor
-                                           Buzzer
-                                             |
-                                             v
-                                         Dashboard (optional Wi-Fi / serial)
+   Detection frames (wireless)            Ultrasonic L/R
+                                           GPS module
+                                            Conveyor motor
+                                            Buzzer
+                                              |
+                                              v
+                                          Dashboard (laptop serial bridge)
 ```
 
 - Controller A (ESP32-CAM) owns the camera and ALL AI inference.
@@ -38,12 +38,12 @@ docs/COMMUNICATION_PROTOCOL.md, docs/AI_MODEL.md, docs/STATE_MACHINE.md
 - Local TinyML inference (INT8, small input)
 - Confidence thresholding
 - Temporal filtering (consecutive-detection count)
-- Structured serial output: AI_DETECTION / AI_NO_DETECTION / AI_HEALTH
-- Serial diagnostics
+- Structured output: AI_DETECTION / AI_NO_DETECTION / AI_HEALTH (ESP-NOW)
+- Debug console on UART0 (USB adapter)
 - Never drives motors. Never makes safety decisions.
 
 ### Controller B — Standard ESP32 (Main Control Unit)
-- UART reception, validation, checksum, sequence handling
+- ESP-NOW reception, validation, checksum, sequence handling
 - Differential motor drive (PWM + direction), safe OFF defaults
 - Ultrasonic distance + filtering + invalid-reading detection
 - GPS NMEA parsing + fix validity
@@ -78,20 +78,47 @@ docs/COMMUNICATION_PROTOCOL.md, docs/AI_MODEL.md, docs/STATE_MACHINE.md
 
 ### Shared (`shared/`)
 - `protocol/protocol.h` — frame format, payload structs, encode/decode
+- `protocol/espnow_link.h` — ESP-NOW helpers (broadcast, channel 1) + optional
+  WPA2 SoftAP on the main controller
 
-### Dashboard (`dashboard/`)
-- Web UI (single HTML/JS file) served optionally by ESP32 or run on laptop
-- reads serial telemetry via a serial-to-web bridge or ESP32 web server
+### Dashboard (`dashboard-ui/` — primary)
+- React + TypeScript + Vite + Tailwind SPA, 5 pages, offline-first (localStorage)
+- Two selectable transports, auto-picked from the Settings endpoint
+  (`transportForUrl()` in `communication/connectionManager.ts`): cloud MQTT
+  over WSS (`wss://broker.hivemq.com:8884/mqtt` — telemetry in, commands out,
+  acks on `riverclean/boat/ack`) **or direct Wi-Fi** to the boat's own
+  gateway (`ws://192.168.4.1:81`, no internet; laptop joins the boat AP or
+  the same router). Any URL containing `/mqtt` → broker, any other `ws://`
+  → direct. Identical JSON schema on both; USB bridge as legacy fallback
+- Commands carry client ids and await firmware acks; telemetry schema is a
+  mirror of telemetry.cpp (typed in `src/services/communication/types.ts`)
+
+### Dashboard (`dashboard/` — legacy fallback)
+- Web UI (single HTML/JS file) + `bridge.py` serial→HTTP bridge for the USB
+  path (COM port → http://localhost:8080)
 
 ---
 
 ## 4. COMMUNICATION
 
-Framed, checksummed, sequenced UART at 115200 baud. See
-docs/COMMUNICATION_PROTOCOL.md.
+Framed, checksummed, sequenced frames over an ESP-NOW wireless link
+(channel 1, broadcast, one frame per datagram). See
+docs/COMMUNICATION_PROTOCOL.md. The USB/UART0 serial port on the main
+controller is reserved for JSON telemetry and debug.
+
+**Dashboard path:** either cloud MQTT (topics above; commands accepted
+with or without a `#<id>` prefix, acked on `riverclean/boat/ack` — see
+docs/COMMUNICATION_PROTOCOL.md §9) or direct WebSocket to the boat (same
+JSON over plain text frames; the dashboard picks the transport from the
+endpoint URL). The main controller also runs
+`WIFI_AP_STA` — ESP-NOW stays on channel 1 while a WPA2 SoftAP
+("RiverClean-Boat", 192.168.4.1) serves a WebSockets server on port 81
+(`ws_gateway.cpp`); the browser sends `[#id] CMD:cmd,value,dur`
+text frames and receives hello/ack/telemetry JSON there too. Both radios
+share the one ESP32 radio on channel 1 by contract.
 
 Main controller invalidates stale detections. On communication loss it
-stops target-seeking and enters a safe state.
+latches a fault, stops target-seeking and enters a safe state.
 
 ---
 

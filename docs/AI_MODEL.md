@@ -2,47 +2,62 @@
 
 **Project:** AI-Based River Cleaning Boat  
 **Controller:** ESP32-CAM (AI vision unit)  
-**Status:** PLANNED — no trained model file exists in the repository.
+**Status:** DETECTOR SHIPPED — on-device CV heuristic (no trained model file).
 
 ---
 
 ## 1. MODEL STATUS
 
-No AI model file was found in the repository. The project brief states a model
-"was previously built and tested using only the ESP32-CAM," but no model
-asset, training code, or inference code exists in this repository. Therefore:
+No trained model file exists in the repository (no dataset, no training run,
+no `assets/model/` asset), so no trained-model accuracy can be claimed.
 
-- No model architecture can be confirmed.
-- No input dimensions, class labels, or confidence range can be asserted.
-- No compatibility with ESP32-CAM RAM/flash/CPU can be verified.
+What **does** run on the hardware today, by explicit user approval as the
+interim detection method, is an **on-device computer-vision detector**
+(`firmware/esp32_cam_ai/src/inference.cpp`):
 
-Do **not** claim the model works until a trained model file is placed in
-`assets/model/` and inference is demonstrated on the actual hardware.
+- Real blob segmentation on the captured frame — not a stub, not a fake.
+- Confidence is derived from **measured image properties only** (contrast
+  vs. water background, blob area, fill ratio) — a flat frame scores low and
+  never clears the threshold.
+- Class assignment is a **shape heuristic** (compact/upright → bottle,
+  large/spread → bag, otherwise debris) — best effort, not learned
+  recognition. Class labels are reported to the operator as such.
+
+Do **not** claim trained-model accuracy. Replacing the heuristic with a
+trained INT8 model remains a user action (§7).
 
 ---
 
-## 2. REFERENCE MODEL (PLACEHOLDER)
+## 2. WHAT ACTUALLY RUNS (SHIPPED)
 
-Until a real trained model is provided, the firmware ships with a **reference
-tiny neural network** small enough to fit the ESP32-CAM:
+`Inference::run()` (interval `INFERENCE_INTERVAL_MS = 150`, 160×120
+grayscale frame):
 
-- Framework: TensorFlow Lite Micro (or ESP-NN) — INT8 quantized
-- Input: 96×96 grayscale, normalized to [0,1] (int8 0..255)
-- Classes: configurable via `AI_MODEL.md` / `shared/configuration/`
-- Tensor arena: statically allocated, sized to fit available RAM (~200–300 KB)
-- Inference: runs on CPU, no GPU/NPU on ESP32-CAM
+1. Estimate water background: frame mean + std-deviation.
+2. Build a deviation mask (pixel differs from mean by `max(22, 1.5σ)`).
+3. Flood-fill the strongest qualifying seed; drop blobs < ~55 px or > ~26%
+   of the frame (rejects noise and whole-frame lighting changes).
+4. Confidence = weighted blend of measured contrast, area, fill ratio.
+5. Class from blob geometry (shape heuristic, labels above).
+6. Fill `bbox` (0..1000) and `center_x` (-500..+500); preserve caller's
+   `timestamp_ms`/`camera_health`.
 
-Reference class mapping (placeholder, replace with trained labels):
+Above `CONFIDENCE_THRESHOLD` (70, twice in a row via the main controller's
+temporal filter) the CAM sends AI_DETECTION, else AI_NO_DETECTION. Static
+buffers: `s_mask[9216]` + `s_stack[9216]` bytes, no heap allocation.
+
+Reference class mapping (`firmware/esp32_cam_ai/include/ai_config.h`):
 
 | Class ID | Label | Notes |
 |---|---|---|
-| 0 | background / no waste | default |
-| 1 | plastic bottle | placeholder |
-| 2 | plastic bag | placeholder |
-| 3 | general debris | placeholder |
+| 0 | background | no detection |
+| 1 | plastic bottle | compact/upright blob (shape heuristic) |
+| 2 | plastic bag | large, sparse, wide blob (shape heuristic) |
+| 3 | general debris | everything else above threshold |
 
-These labels are **placeholders only**. Replace with the actual trained classes
-before field testing.
+The dashboard and per-class waste counters (`bottle_count`/`bag_count`/
+`debris_count`) consume these class IDs unchanged, whether they came from
+the heuristic or a future trained model.
 
 ---
 
@@ -63,15 +78,16 @@ A full-size YOLO cannot run here. Use:
 
 ---
 
-## 4. PREPROCESSING PIPELINE
+## 4. PREPROCESSING PIPELINE (SHIPPED)
 
-1. Capture frame from OV2640 (camera.cpp).
-2. Convert to grayscale (if model trained on grayscale).
-3. Resize to model input width×height.
-4. Normalize pixel values to model input range.
-5. Copy into statically allocated tensor input buffer.
-6. Run inference.
-7. Post-process: argmax class + confidence + bounding box (if model outputs one).
+1. Capture frame from OV2640 at QQVGA (160×120), grayscale (`camera.cpp`).
+2. Mean/std-dev background estimation (no resize/normalize — heuristic works
+   directly on the captured pixels).
+3. Deviation mask + flood-fill blob extraction.
+4. Confidence + shape class + bbox/center computation.
+
+(If a trained model replaces this: resize to model input, normalize, run
+inference, argmax — see §7.)
 
 ---
 
@@ -97,7 +113,8 @@ AI_NO_DETECTION — never silence, never a fabricated detection.
 | CONSECUTIVE_DETECTIONS | 2 | frames in a row required to commit |
 | INFERENCE_INTERVAL_MS | 150 | ms between inference runs |
 
-These belong in `shared/configuration/ai_config.h` (create before build).
+Defined in `firmware/esp32_cam_ai/include/ai_config.h` (detected and
+enforced); main-controller side in `shared/configuration/`.
 
 ---
 
