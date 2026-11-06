@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../services/app_settings.dart';
@@ -24,7 +28,7 @@ class CameraScreen extends StatelessWidget {
           children: [
             // Live Camera Stream Card
             Container(
-              height: 260,
+              height: 300,
               width: double.infinity,
               decoration: BoxDecoration(
                 color: const Color(0xFF090D16),
@@ -42,68 +46,10 @@ class CameraScreen extends StatelessWidget {
                   if (hasStream)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14.5),
-                      child: Image.network(
-                        s.cameraStreamUrl,
-                        fit: BoxFit.cover,
+                      child: MjpegViewer(
+                        url: s.cameraStreamUrl,
                         width: double.infinity,
-                        height: double.infinity,
-                        loadingBuilder: (context, child, loadingProgress) {
-                          if (loadingProgress == null) return child;
-                          return Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation(
-                                    Color(0xFF19C7A1),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Connecting to CAM stream…',
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.6),
-                                    fontSize: 11,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                        errorBuilder: (context, error, stackTrace) {
-                          return Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.signal_wifi_off,
-                                  color: Colors.redAccent,
-                                  size: 36,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Stream unavailable',
-                                  style: TextStyle(
-                                    color: Colors.redAccent,
-                                    fontSize: 11,
-                                    fontFamily: 'monospace',
-                                  ),
-                                ),
-                                Text(
-                                  s.cameraStreamUrl,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.5),
-                                    fontSize: 9,
-                                    fontFamily: 'monospace',
-                                  ),
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                ),
-                              ],
-                            ),
-                          );
-                        },
+                        height: 300,
                       ),
                     )
                   else
@@ -139,12 +85,12 @@ class CameraScreen extends StatelessWidget {
                         ),
                       ),
                     ),
-                  // Detection bounding box overlay
-                  if (t != null && t.detection && hasStream)
-                    _DetectionBoxOverlay(
-                      centerX: t.centerX,
-                      width: double.infinity,
-                      height: 260,
+                  // Flash toggle button
+                  if (hasStream)
+                    Positioned(
+                      bottom: 12,
+                      right: 12,
+                      child: _FlashToggleButton(),
                     ),
                   // Top HUD bar
                   Padding(
@@ -259,7 +205,7 @@ class CameraScreen extends StatelessWidget {
                     ),
                   // Bottom HUD bar
                   Positioned(
-                    bottom: 10,
+                    bottom: 52,
                     left: 12,
                     right: 12,
                     child: Row(
@@ -404,7 +350,6 @@ class CameraScreen extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
                         onPressed: () {
-                          // Navigate handled by parent tab index; show hint
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                                 content: Text(
@@ -481,7 +426,7 @@ class CameraScreen extends StatelessWidget {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   count,
@@ -501,82 +446,198 @@ class CameraScreen extends StatelessWidget {
   }
 }
 
-/// Draws the detection bounding box over the video stream, positioned by
-/// the telemetry centerX (-1000..1000 mapped across the stream width).
-class _DetectionBoxOverlay extends StatelessWidget {
-  final int centerX;
+/// Toggle button for the ESP32-CAM flash LED (GPIO 4).
+/// Sends CAM_FLASH diag command via MQTT/WebSocket → main board → ESP-NOW → CAM.
+class _FlashToggleButton extends StatefulWidget {
+  const _FlashToggleButton();
+
+  @override
+  State<_FlashToggleButton> createState() => _FlashToggleButtonState();
+}
+
+class _FlashToggleButtonState extends State<_FlashToggleButton> {
+  bool _flashOn = false;
+
+  void _toggle() async {
+    setState(() => _flashOn = !_flashOn);
+    final svc = ConnectionService.instance;
+    final err = svc.sendCommand(
+      DiagCmd.camFlash,
+      value: _flashOn ? 1 : 0,
+      durationMs: 0,
+    );
+    if (err != null && mounted) {
+      setState(() => _flashOn = !_flashOn);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Flash $err')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FloatingActionButton.small(
+      onPressed: _toggle,
+      backgroundColor: _flashOn ? Colors.amber : Colors.black87,
+      foregroundColor: _flashOn ? Colors.black : Colors.white,
+      tooltip: _flashOn ? 'Flash ON' : 'Flash OFF',
+      child: Icon(_flashOn ? Icons.highlight : Icons.flash_off),
+    );
+  }
+}
+
+/// Custom MJPEG viewer — parses multipart/x-mixed-replace stream and
+/// renders each JPEG frame. Flutter's Image.network does not support MJEP
+/// natively, so we extract SOI/EOI markers from the raw byte stream.
+class MjpegViewer extends StatefulWidget {
+  final String url;
   final double width;
   final double height;
 
-  const _DetectionBoxOverlay({
-    required this.centerX,
+  const MjpegViewer({
+    super.key,
+    required this.url,
     required this.width,
     required this.height,
   });
 
   @override
-  Widget build(BuildContext context) {
-    // Map centerX (-500..500 approx) to a horizontal offset across the card
-    final cx = width / 2 + (centerX * (width * 0.0008));
-    return Positioned(
-      left: cx.clamp(20.0, width - 90) - 45,
-      top: height / 2 - 40,
-      child: SizedBox(
-        width: 90,
-        height: 80,
-        child: Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.greenAccent, width: 2.5),
-                borderRadius: BorderRadius.circular(6),
-              ),
-            ),
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _CornerMarkerPainter(),
-              ),
-            ),
-            const Center(
-              child: Text(
-                'TARGET',
-                style: TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  State<MjpegViewer> createState() => _MjpegViewerState();
 }
 
-class _CornerMarkerPainter extends CustomPainter {
+class _MjpegViewerState extends State<MjpegViewer> {
+  Uint8List? _currentFrame;
+  String? _error;
+
   @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.greenAccent
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5;
-    final m = 10.0; // corner marker length
-    // top-left
-    canvas.drawLine(Offset(0, m), Offset(0, 0), paint);
-    canvas.drawLine(Offset(0, 0), Offset(m, 0), paint);
-    // top-right
-    canvas.drawLine(Offset(size.width - m, 0), Offset(size.width, 0), paint);
-    canvas.drawLine(Offset(size.width, 0), Offset(size.width, m), paint);
-    // bottom-left
-    canvas.drawLine(Offset(0, size.height - m), Offset(0, size.height), paint);
-    canvas.drawLine(Offset(0, size.height), Offset(m, size.height), paint);
-    // bottom-right
-    canvas.drawLine(Offset(size.width - m, size.height), Offset(size.width, size.height), paint);
-    canvas.drawLine(Offset(size.width, size.height - m), Offset(size.width, size.height), paint);
+  void initState() {
+    super.initState();
+    _connect();
+  }
+
+  Future<void> _connect() async {
+    try {
+      final client = HttpClient();
+      final uri = Uri.parse(widget.url);
+      final request = await client.openUrl('GET', uri);
+      final response = await request.close();
+
+      if (response.statusCode != 200) {
+        if (mounted) {
+          setState(() => _error = 'HTTP ${response.statusCode}');
+        }
+        return;
+      }
+
+      // Parse boundary from content-type header
+      final ct = response.headers.contentType.toString();
+      final boundaryMatch = RegExp(r'boundary=([^\s;]+)').firstMatch(ct);
+      if (boundaryMatch == null) {
+        if (mounted) {
+          setState(() => _error = 'No boundary in content-type');
+        }
+        return;
+      }
+
+    if (mounted) {
+      setState(() => _error = null);
+    }
+
+    await _readFrames(response);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = e.toString());
+      }
+    }
+  }
+
+  Future<void> _readFrames(HttpClientResponse response) async {
+    final buffer = <int>[];
+
+    await for (final chunk in response) {
+      buffer.addAll(chunk);
+
+      while (true) {
+        // Find JPEG SOI (0xFF 0xD8)
+        int soi = -1;
+        for (int i = 0; i < buffer.length - 1; i++) {
+          if (buffer[i] == 0xFF && buffer[i + 1] == 0xD8) {
+            soi = i;
+            break;
+          }
+        }
+        if (soi == -1) break;
+
+        // Discard multipart headers between frames
+        if (soi > 0) buffer.removeRange(0, soi);
+
+        // Find JPEG EOI (0xFF 0xD9)
+        int eoi = -1;
+        for (int i = 0; i < buffer.length - 1; i++) {
+          if (buffer[i] == 0xFF && buffer[i + 1] == 0xD9) {
+            eoi = i;
+            break;
+          }
+        }
+        if (eoi == -1) break;
+
+        // Extract complete JPEG frame
+        final frameBytes = buffer.sublist(0, eoi + 2);
+        buffer.removeRange(0, eoi + 2);
+
+        if (mounted) {
+          setState(() => _currentFrame = Uint8List.fromList(frameBytes));
+        }
+      }
+
+      // Keep buffer bounded
+      if (buffer.length > 200000) {
+        buffer.removeRange(0, buffer.length - 50000);
+      }
+    }
+
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   @override
-  bool shouldRepaint(covariant _CornerMarkerPainter oldDelegate) => false;
+  void dispose() {
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: widget.width,
+      height: widget.height,
+      color: const Color(0xFF090D16),
+      child: _currentFrame == null
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_error != null) ...[
+                  const Icon(Icons.signal_wifi_off,
+                      color: Colors.redAccent, size: 36),
+                  const SizedBox(height: 8),
+                  Text(_error!,
+                      style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 11,
+                          fontFamily: 'monospace')),
+                ] else
+                  const CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(Color(0xFF19C7A1)),
+                  ),
+              ],
+            )
+          : Image.memory(
+              _currentFrame!,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: double.infinity,
+            ),
+    );
+  }
 }

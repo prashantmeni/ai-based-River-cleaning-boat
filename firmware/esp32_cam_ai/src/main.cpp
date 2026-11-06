@@ -46,6 +46,14 @@ static void on_wifi_config(const char *ssid, const char *password) {
     WiFi.begin(ssid, password);
 }
 
+/* Camera flash control received from the main controller over ESP-NOW.
+ * Toggles the camera flash LED (GPIO 4) on/off for night illumination. */
+static void on_cam_flash(uint8_t state) {
+    digitalWrite(CAM_FLASH_GPIO, state ? HIGH : LOW);
+    Serial.print("[CAM] flash ");
+    Serial.println(state ? "ON" : "OFF");
+}
+
 static void print_status(const char *msg) {
     CAM_UART_PORT.print("[CAM] ");
     CAM_UART_PORT.println(msg);
@@ -101,6 +109,10 @@ void setup() {
     pinMode(STATUS_LED_GPIO, OUTPUT);
     digitalWrite(STATUS_LED_GPIO, LOW);
 
+    /* Camera flash LED (GPIO 4) — off by default. */
+    pinMode(CAM_FLASH_GPIO, OUTPUT);
+    digitalWrite(CAM_FLASH_GPIO, LOW);
+
     CAM_UART_PORT.begin(CAM_UART_BAUD);
     print_status("booting ESP32-CAM AI vision unit");
 
@@ -124,6 +136,7 @@ void setup() {
         Serial.print("[CAM] esp-now link up mac=");
         Serial.println(mac);
         g_serial.set_wifi_config_callback(on_wifi_config);
+        g_serial.set_flash_callback(on_cam_flash);
     } else {
         print_status("esp-now link FAILED");
     }

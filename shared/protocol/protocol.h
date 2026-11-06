@@ -42,6 +42,7 @@ typedef enum {
     PROTOCOL_MSG_DIAG_COMMAND      = 0x20,
     PROTOCOL_MSG_FAULT_REPORT      = 0x30,
     PROTOCOL_MSG_WIFI_CONFIG       = 0x40,
+    PROTOCOL_MSG_CAM_FLASH         = 0x50,
 } protocol_msg_type_t;
 
 /* -----------------------------------------------------------------------
@@ -119,6 +120,7 @@ typedef struct __attribute__((packed)) {
 #define DIAG_CMD_CONVEYOR_OFF     6
 #define DIAG_CMD_AUTONOMOUS_ON    7
 #define DIAG_CMD_AUTONOMOUS_OFF   8
+#define DIAG_CMD_CAM_FLASH        9
 
 /* -----------------------------------------------------------------------
  * Wi-Fi provisioning payload (PROTOCOL_MSG_WIFI_CONFIG)
@@ -161,6 +163,22 @@ static inline int protocol_parse_wifi_config_payload(
         if (password_out[i] == '\0') break;
     }
     return 0;
+}
+#endif
+
+/* -----------------------------------------------------------------------
+ * Camera flash control payload (PROTOCOL_MSG_CAM_FLASH)
+ * Sent main->CAM over ESP-NOW to turn the camera flash LED on/off.
+ * ----------------------------------------------------------------------- */
+typedef struct __attribute__((packed)) {
+    uint8_t  state;   /* 0 = off, 1 = on */
+} cam_flash_payload_t;
+
+#ifdef __cplusplus
+static inline size_t protocol_build_cam_flash_payload(
+        uint8_t state, uint8_t *out) {
+    out[0] = state;
+    return 1;
 }
 #endif
 
@@ -300,7 +318,8 @@ static inline protocol_parse_result_t protocol_rx_push(protocol_rx_t *rx,
         type != PROTOCOL_MSG_MAIN_STATUS &&
         type != PROTOCOL_MSG_DIAG_COMMAND &&
         type != PROTOCOL_MSG_FAULT_REPORT &&
-        type != PROTOCOL_MSG_WIFI_CONFIG) {
+        type != PROTOCOL_MSG_WIFI_CONFIG &&
+        type != PROTOCOL_MSG_CAM_FLASH) {
         rx->start_seen = 0;
         return PROTOCOL_PARSE_UNKNOWN_TYPE;
     }

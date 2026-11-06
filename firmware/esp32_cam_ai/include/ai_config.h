@@ -61,4 +61,7 @@
 /* --- Serial status LED --- */
 #define STATUS_LED_GPIO            33   /* ESP32-CAM built-in LED */
 
+/* --- Camera flash LED (AI-Thinker ESP32-CAM: GPIO 4) --- */
+#define CAM_FLASH_GPIO             4   /* Flash LED / torch */
+
 #endif /* AI_CONFIG_H */

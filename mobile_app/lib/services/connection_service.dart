@@ -25,6 +25,7 @@ class DiagCmd {
   static const conveyorOff = 6;
   static const autonomousOn = 7;
   static const autonomousOff = 8;
+  static const camFlash = 9;
 }
 
 /// Connection service — one endpoint, two transports, auto-selected exactly

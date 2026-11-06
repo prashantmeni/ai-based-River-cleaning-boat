@@ -4,25 +4,32 @@
 #include "protocol.h"
 
 static void (*s_wifi_config_cb)(const char *ssid, const char *password) = nullptr;
+static void (*s_flash_cb)(uint8_t state) = nullptr;
 
 static void espnow_recv_cb(const esp_now_recv_info_t *info,
                            const uint8_t *data, int len) {
     (void)info;
-    if (!data || len <= 0 || !s_wifi_config_cb) return;
+    if (!data || len <= 0) return;
 
-    /* Only handle WIFI_CONFIG frames (type byte at offset 2). */
-    if (data[2] != PROTOCOL_MSG_WIFI_CONFIG) return;
+    /* Only handle frames with a valid type byte at offset 2. */
+    if (data[2] != PROTOCOL_MSG_WIFI_CONFIG && data[2] != PROTOCOL_MSG_CAM_FLASH)
+        return;
 
     /* Payload starts at offset 7 (START+VER+TYPE+SEQ2+LEN2). */
     const uint8_t *payload = data + 7;
     size_t payload_len = (size_t)data[5] | ((size_t)data[6] << 8);
-    if (payload_len < 64) return;
 
-    char ssid[32] = "";
-    char pass[32] = "";
-    if (protocol_parse_wifi_config_payload(payload, payload_len,
-                                           ssid, pass, sizeof(ssid)) == 0) {
-        s_wifi_config_cb(ssid, pass);
+    if (data[2] == PROTOCOL_MSG_WIFI_CONFIG) {
+        if (!s_wifi_config_cb || payload_len < 64) return;
+        char ssid[32] = "";
+        char pass[32] = "";
+        if (protocol_parse_wifi_config_payload(payload, payload_len,
+                                               ssid, pass, sizeof(ssid)) == 0) {
+            s_wifi_config_cb(ssid, pass);
+        }
+    } else if (data[2] == PROTOCOL_MSG_CAM_FLASH) {
+        if (!s_flash_cb || payload_len < 1) return;
+        s_flash_cb(payload[0]);
     }
 }
 
@@ -38,6 +45,10 @@ bool SerialTx::begin() {
 
 void SerialTx::set_wifi_config_callback(void (*cb)(const char *, const char *)) {
     s_wifi_config_cb = cb;
+}
+
+void SerialTx::set_flash_callback(void (*cb)(uint8_t state)) {
+    s_flash_cb = cb;
 }
 
 bool SerialTx::_send_frame(uint8_t type, const uint8_t *payload,

@@ -51,6 +51,23 @@ static void on_ai_diag_command(uint8_t cmd, uint8_t value, uint16_t duration_ms)
     Serial.print("[MAIN] diag cmd="); Serial.print(cmd);
     Serial.print(" val="); Serial.print(value);
     Serial.print(" dur="); Serial.println(duration_ms);
+
+    /* CAM flash control: forward to the ESP32-CAM over ESP-NOW instead of
+     * handling locally on the main board. */
+    if (cmd == DIAG_CMD_CAM_FLASH) {
+        uint8_t wire[PROTOCOL_MAX_FRAME];
+        uint8_t wpayload[1];
+        size_t plen = protocol_build_cam_flash_payload((uint8_t)value, wpayload);
+        int n = protocol_serialize_frame(PROTOCOL_MSG_CAM_FLASH, 0,
+                                         wpayload, (uint16_t)plen,
+                                         wire, sizeof(wire));
+        if (n > 0 && espnow_link_send(wire, (size_t)n)) {
+            Serial.println("[MAIN] CAM flash command forwarded via ESP-NOW.");
+        } else {
+            Serial.println("[MAIN] CAM flash ESP-NOW send failed.");
+        }
+        return;
+    }
     g_nav.on_diag_command(cmd, value, duration_ms);
 }
 
@@ -137,7 +154,7 @@ static void handle_mqtt_command(char* topic, byte* payload, unsigned int length)
               sscanf(body + 4, "%u,%u,%u", &cmd, &val, &dur) == 3 &&
               cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_AUTONOMOUS_OFF;
     if (ok) {
-        g_nav.on_diag_command((uint8_t)cmd, (uint8_t)val, (uint16_t)dur);
+        on_ai_diag_command((uint8_t)cmd, (uint8_t)val, (uint16_t)dur);
         Serial.println("[MQTT] Command executed successfully.");
     } else {
         Serial.println("[MQTT] Command rejected (invalid payload).");
@@ -333,7 +350,7 @@ void setup() {
     /* WebSocket gateway: commands route through the same validation path
      * as USB/dashboard diagnostics (nav.on_diag_command). */
     ws_gateway_set_command_handler(
-        [](uint8_t c, uint8_t v, uint16_t d) { g_nav.on_diag_command(c, v, d); });
+        [](uint8_t c, uint8_t v, uint16_t d) { on_ai_diag_command(c, v, d); });
     ws_gateway_begin();
 
     /* MQTT setup */

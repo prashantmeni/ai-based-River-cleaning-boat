@@ -30,6 +30,11 @@
         void set_wifi_config_callback(void (*cb)(const char *ssid,
                                                  const char *password));
 
+        /* Set a callback for camera flash control frames (PROTOCOL_MSG_CAM_FLASH)
+         * sent by the main controller over ESP-NOW. The callback receives the
+         * desired flash state (0 = off, 1 = on). */
+        void set_flash_callback(void (*cb)(uint8_t state));
+
         /* Kept for API compatibility: ESP-NOW is packet-based, nothing to flush. */
         void flush();
 
