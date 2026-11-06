@@ -12,12 +12,15 @@ class AppSettings {
   static const _kDurationMs = 'riverclean.durationMs';
   static const _kWifiSsid = 'riverclean.wifiSsid';
   static const _kWifiPassword = 'riverclean.wifiPassword';
+  static const _kCameraStreamUrl = 'riverclean.cameraStreamUrl';
 
   String endpoint = 'wss://broker.hivemq.com:8884/mqtt';
   int manualPwm = 150;
   int commandDurationMs = 600;
   String wifiSsid = 'Laxmi_Venkateshwar_Krupa';
   String wifiPassword = '';
+  /// MJPEG stream URL from the ESP32-CAM, e.g. http://192.168.4.100:8080/stream
+  String cameraStreamUrl = '';
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
@@ -26,6 +29,7 @@ class AppSettings {
     commandDurationMs = p.getInt(_kDurationMs) ?? commandDurationMs;
     wifiSsid = p.getString(_kWifiSsid) ?? wifiSsid;
     wifiPassword = p.getString(_kWifiPassword) ?? wifiPassword;
+    cameraStreamUrl = p.getString(_kCameraStreamUrl) ?? cameraStreamUrl;
   }
 
   Future<void> save() async {
@@ -35,6 +39,7 @@ class AppSettings {
     await p.setInt(_kDurationMs, commandDurationMs);
     await p.setString(_kWifiSsid, wifiSsid);
     await p.setString(_kWifiPassword, wifiPassword);
+    await p.setString(_kCameraStreamUrl, cameraStreamUrl);
   }
 
   Future<void> reset() async {
@@ -45,10 +50,12 @@ class AppSettings {
     await p.remove(_kDurationMs);
     await p.remove(_kWifiSsid);
     await p.remove(_kWifiPassword);
+    await p.remove(_kCameraStreamUrl);
     endpoint = 'wss://broker.hivemq.com:8884/mqtt';
     manualPwm = 150;
     commandDurationMs = 600;
     wifiSsid = 'Laxmi_Venkateshwar_Krupa';
     wifiPassword = '';
+    cameraStreamUrl = '';
   }
 }

@@ -24,6 +24,7 @@
 #include "inference.h"
 #include "detection.h"
 #include "serial_tx.h"
+#include "stream_server.h"
 #include "protocol.h"
 #include "espnow_link.h"
 
@@ -117,6 +118,13 @@ void setup() {
     }
 
     network_bringup();
+
+    /* Start the MJPEG HTTP stream server (/stream on port 8080). */
+    if (!stream_server_begin()) {
+        print_status("stream server FAILED to start");
+    }
+
+    Serial.println("[CAM] init complete.");
 }
 
 void loop() {

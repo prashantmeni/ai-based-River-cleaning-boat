@@ -1,63 +1,154 @@
 import 'package:flutter/material.dart';
 
+import '../services/app_settings.dart';
 import '../services/connection_service.dart';
 
-/// Modern AI Computer Vision screen — displays the live detection viewfinder
-/// telemetry, bounding box analytics, waste separation counts, and detection status.
+/// AI Computer Vision screen — displays the live ESP32-CAM MJPEG stream
+/// with a real-time detection bounding-box overlay, telemetry HUD, and
+/// waste separation counters.
 class CameraScreen extends StatelessWidget {
   const CameraScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final svc = ConnectionService.instance;
+    final s = AppSettings.instance;
     final scheme = Theme.of(context).colorScheme;
     return ListenableBuilder(
       listenable: svc,
       builder: (context, _) {
         final t = svc.last;
-        if (t == null) {
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(
-                  'Waiting for telemetry & AI feed…',
-                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
-                ),
-              ],
-            ),
-          );
-        }
+        final hasStream = s.cameraStreamUrl.isNotEmpty;
         return ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(12),
           children: [
-            // Viewfinder Camera Simulation Card
+            // Live Camera Stream Card
             Container(
-              height: 220,
+              height: 260,
+              width: double.infinity,
               decoration: BoxDecoration(
                 color: const Color(0xFF090D16),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: t.detection ? Colors.greenAccent.withValues(alpha: 0.5) : scheme.outlineVariant,
+                  color: t != null && t.detection
+                      ? Colors.greenAccent.withValues(alpha: 0.6)
+                      : scheme.outlineVariant,
                   width: 1.5,
                 ),
               ),
               child: Stack(
                 children: [
-                  // Grid overlay lines
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _ViewfinderGridPainter(
-                        hasLock: t.detection,
-                        centerX: t.centerX,
+                  // MJPEG video stream
+                  if (hasStream)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14.5),
+                      child: Image.network(
+                        s.cameraStreamUrl,
+                        fit: BoxFit.cover,
+                        width: double.infinity,
+                        height: double.infinity,
+                        loadingBuilder: (context, child, loadingProgress) {
+                          if (loadingProgress == null) return child;
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation(
+                                    Color(0xFF19C7A1),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Connecting to CAM stream…',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.6),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                        errorBuilder: (context, error, stackTrace) {
+                          return Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.signal_wifi_off,
+                                  color: Colors.redAccent,
+                                  size: 36,
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Stream unavailable',
+                                  style: TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                  ),
+                                ),
+                                Text(
+                                  s.cameraStreamUrl,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.5),
+                                    fontSize: 9,
+                                    fontFamily: 'monospace',
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    )
+                  else
+                    Container(
+                      color: const Color(0xFF090D16),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.videocam_off,
+                              color: Colors.white24,
+                              size: 40,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'No CAM stream URL',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.5),
+                                fontSize: 11,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                            Text(
+                              'Set it in Settings',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.4),
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  // Detection bounding box overlay
+                  if (t != null && t.detection && hasStream)
+                    _DetectionBoxOverlay(
+                      centerX: t.centerX,
+                      width: double.infinity,
+                      height: 260,
+                    ),
                   // Top HUD bar
                   Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(12),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -67,11 +158,16 @@ class CameraScreen extends StatelessWidget {
                               width: 10,
                               height: 10,
                               decoration: BoxDecoration(
-                                color: t.detection ? Colors.greenAccent : Colors.amber,
+                                color: t != null && t.detection
+                                    ? Colors.greenAccent
+                                    : Colors.amber,
                                 shape: BoxShape.circle,
                                 boxShadow: [
                                   BoxShadow(
-                                    color: (t.detection ? Colors.greenAccent : Colors.amber).withValues(alpha: 0.6),
+                                    color: (t != null && t.detection
+                                            ? Colors.greenAccent
+                                            : Colors.amber)
+                                        .withValues(alpha: 0.6),
                                     blurRadius: 8,
                                   ),
                                 ],
@@ -79,7 +175,9 @@ class CameraScreen extends StatelessWidget {
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              t.detection ? 'LIVE TRACKING' : 'SCANNING AREA',
+                              (t != null && t.detection)
+                                  ? 'LIVE TRACKING'
+                                  : 'SCANNING AREA',
                               style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
@@ -89,93 +187,104 @@ class CameraScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: Text(
-                            '160×120 • 150ms',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontFamily: 'monospace',
-                              color: scheme.onSurfaceVariant,
+                        if (t != null)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.6),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: Text(
+                              '160×120 • 150ms',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                                color: scheme.onSurfaceVariant,
+                              ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
                   // Center HUD Content if target locked
-                  Center(
-                    child: t.detection
-                        ? Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.greenAccent.withValues(alpha: 0.15),
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.greenAccent.withValues(alpha: 0.5)),
-                                ),
-                                child: Text(
-                                  'TARGET: ${t.classLabel.toUpperCase()}',
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                    fontFamily: 'monospace',
-                                    color: Colors.greenAccent,
-                                  ),
-                                ),
+                  if (t != null && t.detection && hasStream)
+                    Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 14, vertical: 7),
+                            decoration: BoxDecoration(
+                              color: Colors.greenAccent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: Colors.greenAccent.withValues(alpha: 0.5)),
+                            ),
+                            child: Text(
+                              'TARGET: ${t.classLabel.toUpperCase()}',
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'monospace',
+                                color: Colors.greenAccent,
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Confidence: ${t.confidence}%  |  Offset X: ${t.centerX}',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'monospace',
-                                  color: Colors.white.withValues(alpha: 0.8),
-                                ),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            'SEARCHING FOR DEBRIS…',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontFamily: 'monospace',
-                              color: Colors.white.withValues(alpha: 0.4),
-                              letterSpacing: 2,
                             ),
                           ),
-                  ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Confidence: ${t.confidence}%  |  Offset X: ${t.centerX}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              color: Colors.white.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (t != null && !t.detection && hasStream)
+                    Center(
+                      child: Text(
+                        'SEARCHING FOR DEBRIS…',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontFamily: 'monospace',
+                          color: Colors.white.withValues(alpha: 0.45),
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ),
                   // Bottom HUD bar
                   Positioned(
-                    bottom: 12,
-                    left: 16,
-                    right: 16,
+                    bottom: 10,
+                    left: 12,
+                    right: 12,
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'CAM LINK: ${t.commsOk ? 'ONLINE' : 'DISCONNECTED'}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontFamily: 'monospace',
-                            color: t.commsOk ? Colors.greenAccent : Colors.redAccent,
+                        if (t != null)
+                          Text(
+                            'CAM LINK: ${t.commsOk ? 'ONLINE' : 'DISCONNECTED'}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                              color: t.commsOk
+                                  ? Colors.greenAccent
+                                  : Colors.redAccent,
+                            ),
                           ),
-                        ),
-                        Text(
-                          'STATE: ${t.state}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontFamily: 'monospace',
-                            color: Colors.white70,
+                        if (t != null)
+                          Text(
+                            'STATE: ${t.state}',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                              color: Colors.white70,
+                            ),
                           ),
-                        ),
                       ],
                     ),
                   ),
@@ -185,88 +294,130 @@ class CameraScreen extends StatelessWidget {
             const SizedBox(height: 16),
 
             // Detection Metrics Card
-            _modernCard(
-              context,
-              title: 'CURRENT TARGET METRICS',
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _metricTile(
-                          'Classification',
-                          t.detection ? t.classLabel : 'None',
-                          t.detection ? Colors.greenAccent : scheme.onSurfaceVariant,
+            if (t != null)
+              _modernCard(
+                context,
+                title: 'CURRENT TARGET METRICS',
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _metricTile(
+                            'Classification',
+                            t.detection ? t.classLabel : 'None',
+                            t.detection ? Colors.greenAccent
+                                : scheme.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                      Expanded(
-                        child: _metricTile(
-                          'Confidence Score',
-                          '${t.confidence}%',
-                          t.confidence > 70 ? Colors.greenAccent : Colors.amber,
+                        Expanded(
+                          child: _metricTile(
+                            'Confidence Score',
+                            '${t.confidence}%',
+                            t.confidence > 70
+                                ? Colors.greenAccent
+                                : Colors.amber,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _metricTile('Center Offset X', '${t.centerX}', scheme.onSurface),
-                      ),
-                      Expanded(
-                        child: _metricTile('Vessel Nav State', t.state, scheme.onSurface),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: (t.confidence.clamp(0, 100)) / 100,
-                      minHeight: 8,
-                      backgroundColor: scheme.surfaceContainerHighest,
-                      color: t.detection ? Colors.greenAccent : scheme.primary,
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _metricTile('Center Offset X',
+                              '${t.centerX}', scheme.onSurface),
+                        ),
+                        Expanded(
+                          child: _metricTile('Vessel Nav State', t.state,
+                              scheme.onSurface),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(999),
+                      child: LinearProgressIndicator(
+                        value: (t.confidence.clamp(0, 100)) / 100,
+                        minHeight: 8,
+                        backgroundColor: scheme.surfaceContainerHighest,
+                        color: t.detection
+                            ? Colors.greenAccent
+                            : scheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 16),
 
             // Waste Separated Counters
-            _modernCard(
-              context,
-              title: 'WASTE SEPARATED COUNTERS',
-              child: GridView.count(
-                crossAxisCount: 2,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 2.2,
-                children: [
-                  _counterBox('Plastic Bottles', '${t.bottleCount}', Icons.wine_bar, Colors.cyan),
-                  _counterBox('Plastic Bags', '${t.bagCount}', Icons.shopping_bag_outlined, Colors.purpleAccent),
-                  _counterBox('General Debris', '${t.debrisCount}', Icons.delete_outline, Colors.amber),
-                  _counterBox('Total Collections', '${t.collectionCount}', Icons.done_all, Colors.greenAccent),
-                ],
+            if (t != null)
+              _modernCard(
+                context,
+                title: 'WASTE SEPARATED COUNTERS',
+                child: GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 10,
+                  childAspectRatio: 2.2,
+                  children: [
+                    _counterBox(
+                        'Plastic Bottles', '${t.bottleCount}',
+                        Icons.wine_bar, Colors.cyan),
+                    _counterBox(
+                        'Plastic Bags', '${t.bagCount}',
+                        Icons.shopping_bag_outlined, Colors.purpleAccent),
+                    _counterBox(
+                        'General Debris', '${t.debrisCount}',
+                        Icons.delete_outline, Colors.amber),
+                    _counterBox(
+                        'Total Collections', '${t.collectionCount}',
+                        Icons.done_all, Colors.greenAccent),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 16),
 
-            // Architecture Note Card
-            _modernCard(
-              context,
-              title: 'EMBEDDED AI ARCHITECTURE',
-              child: Text(
-                'The ESP32-CAM captures 160×120 grayscale frames and runs an optimized '
-                'on-device blob segmentation and shape classifier over ESP-NOW. '
-                'Metadata (class, confidence, center position) is streamed in real-time '
-                'without bandwidth-heavy MJPEG video streams.',
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant, height: 1.4),
+            // Stream setup hint
+            if (!hasStream)
+              _modernCard(
+                context,
+                title: 'ENABLE LIVE CAMERA',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'The ESP32-CAM hosts an MJPEG stream at '
+                      'http://<cam-ip>:8080/stream. '
+                      'Enter the URL in Settings → AI CAMERA MJPEG STREAM, '
+                      'then return here to view live video with detection overlay.',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.onSurfaceVariant,
+                          height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () {
+                          // Navigate handled by parent tab index; show hint
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text(
+                                    'Open Settings to enter the CAM stream URL')),
+                          );
+                        },
+                        icon: const Icon(Icons.settings, size: 16),
+                        label: const Text('Open Settings'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
           ],
         );
       },
@@ -350,53 +501,82 @@ class CameraScreen extends StatelessWidget {
   }
 }
 
-class _ViewfinderGridPainter extends CustomPainter {
-  final bool hasLock;
+/// Draws the detection bounding box over the video stream, positioned by
+/// the telemetry centerX (-1000..1000 mapped across the stream width).
+class _DetectionBoxOverlay extends StatelessWidget {
   final int centerX;
+  final double width;
+  final double height;
 
-  _ViewfinderGridPainter({required this.hasLock, required this.centerX});
+  const _DetectionBoxOverlay({
+    required this.centerX,
+    required this.width,
+    required this.height,
+  });
 
+  @override
+  Widget build(BuildContext context) {
+    // Map centerX (-500..500 approx) to a horizontal offset across the card
+    final cx = width / 2 + (centerX * (width * 0.0008));
+    return Positioned(
+      left: cx.clamp(20.0, width - 90) - 45,
+      top: height / 2 - 40,
+      child: SizedBox(
+        width: 90,
+        height: 80,
+        child: Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.greenAccent, width: 2.5),
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _CornerMarkerPainter(),
+              ),
+            ),
+            const Center(
+              child: Text(
+                'TARGET',
+                style: TextStyle(
+                  color: Colors.greenAccent,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CornerMarkerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final paintGrid = Paint()
-      ..color = Colors.white.withValues(alpha: 0.05)
-      ..strokeWidth = 1.0;
-
-    // Draw grid lines
-    const step = 30.0;
-    for (double i = 0; i < size.width; i += step) {
-      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paintGrid);
-    }
-    for (double i = 0; i < size.height; i += step) {
-      canvas.drawLine(Offset(0, i), Offset(size.width, i), paintGrid);
-    }
-
-    // Draw crosshair center
-    final paintCross = Paint()
-      ..color = (hasLock ? Colors.greenAccent : Colors.white24).withValues(alpha: 0.4)
-      ..strokeWidth = 1.5;
-
-    final cx = size.width / 2;
-    final cy = size.height / 2;
-    canvas.drawLine(Offset(cx - 15, cy), Offset(cx + 15, cy), paintCross);
-    canvas.drawLine(Offset(cx, cy - 15), Offset(cx, cy + 15), paintCross);
-
-    // If target locked, draw target box
-    if (hasLock) {
-      final paintBox = Paint()
-        ..color = Colors.greenAccent
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0;
-
-      // map centerX (-100 to 100 approx) to canvas offset
-      final boxX = cx + (centerX * 0.8) - 30;
-      final boxRect = Rect.fromLTWH(boxX.clamp(20.0, size.width - 80), cy - 35, 60, 70);
-      canvas.drawRect(boxRect, paintBox);
-    }
+    final paint = Paint()
+      ..color = Colors.greenAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.5;
+    final m = 10.0; // corner marker length
+    // top-left
+    canvas.drawLine(Offset(0, m), Offset(0, 0), paint);
+    canvas.drawLine(Offset(0, 0), Offset(m, 0), paint);
+    // top-right
+    canvas.drawLine(Offset(size.width - m, 0), Offset(size.width, 0), paint);
+    canvas.drawLine(Offset(size.width, 0), Offset(size.width, m), paint);
+    // bottom-left
+    canvas.drawLine(Offset(0, size.height - m), Offset(0, size.height), paint);
+    canvas.drawLine(Offset(0, size.height), Offset(m, size.height), paint);
+    // bottom-right
+    canvas.drawLine(Offset(size.width - m, size.height), Offset(size.width, size.height), paint);
+    canvas.drawLine(Offset(size.width, size.height - m), Offset(size.width, size.height), paint);
   }
 
   @override
-  bool shouldRepaint(covariant _ViewfinderGridPainter oldDelegate) {
-    return oldDelegate.hasLock != hasLock || oldDelegate.centerX != centerX;
-  }
+  bool shouldRepaint(covariant _CornerMarkerPainter oldDelegate) => false;
 }

@@ -12,6 +12,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _endpointCtrl = TextEditingController();
+  final _streamCtrl = TextEditingController();
   final _ssidCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   double _pwm = 150;
@@ -25,6 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     final s = AppSettings.instance;
     _endpointCtrl.text = s.endpoint;
+    _streamCtrl.text = s.cameraStreamUrl;
     _ssidCtrl.text = s.wifiSsid;
     _passCtrl.text = s.wifiPassword;
     _pwm = s.manualPwm.toDouble();
@@ -35,6 +37,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void dispose() {
     _endpointCtrl.dispose();
+    _streamCtrl.dispose();
     _ssidCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
@@ -44,6 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final s = AppSettings.instance;
     final oldUrl = s.endpoint;
     s.endpoint = _endpointCtrl.text.trim();
+    s.cameraStreamUrl = _streamCtrl.text.trim();
     s.wifiSsid = _ssidCtrl.text.trim();
     s.wifiPassword = _passCtrl.text;
     s.manualPwm = _pwm.round();
@@ -61,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await AppSettings.instance.reset();
     final s = AppSettings.instance;
     _endpointCtrl.text = s.endpoint;
+    _streamCtrl.text = s.cameraStreamUrl;
     _ssidCtrl.text = s.wifiSsid;
     _passCtrl.text = s.wifiPassword;
     setState(() {
@@ -124,6 +129,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                   ),
                 ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Camera Stream URL Card
+        _modernCard(
+          context,
+          title: 'AI CAMERA MJPEG STREAM',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'HTTP MJPEG stream URL from the ESP32-CAM /stream endpoint. '
+                'Example: http://192.168.4.100:8080/stream. '
+                'The phone must be on the same network as the CAM.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _streamCtrl,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  labelText: 'Camera Stream URL',
+                  hintText: 'http://192.168.4.100:8080/stream',
+                  helperText: 'Leave blank to hide the live video view',
+                  helperMaxLines: 2,
+                ),
+                style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
               ),
             ],
           ),
