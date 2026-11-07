@@ -21,9 +21,14 @@
 
 /* --- Optional Router connection for Dual AP+STA mode ---
  * Leave blank ("") if you want AP-only mode. Fill in your router details
- * if you want the boat to join your Wi-Fi while still hosting its own AP. */
-#define ROUTER_SSID                "Laxmi_Venkateshwar_Krupa"
-#define ROUTER_PASS                "Menis@2020"
+ * if you want the boat to join your Wi-Fi while still hosting its own AP.
+ * NOTE: Disabled Laxmi_Venkateshwar_Krupa — use Wi-Fi provisioning
+ * (riverclean/boat/wifi_config) to set the network instead.
+ */
+//#define ROUTER_SSID                "Laxmi_Venkateshwar_Krupa"
+//#define ROUTER_PASS                "Menis@2020"
+#define ROUTER_SSID                ""
+#define ROUTER_PASS                ""
 
 /* --- Free Public MQTT Broker (broker.hivemq.com) --- */
 #define MQTT_BROKER_HOST           "broker.hivemq.com"

@@ -64,6 +64,7 @@ static void print_status(const char *msg) {
  * active channel. Wi-Fi is kept only for network presence — detections
  * travel over ESP-NOW. */
 static bool try_join(const char *ssid, const char *pass, uint32_t timeout_ms) {
+    if (ssid == nullptr || ssid[0] == '\0') return false;
     WiFi.begin(ssid, pass);
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED &&
