@@ -28,12 +28,9 @@
  * not reachable it joins the main controller's dashboard SoftAP (video
  * only when the laptop is on that AP), and finally starts a fallback
  * SoftAP. ESP-NOW follows the active channel via espnow_link_resync().
- * NOTE: Disabled Laxmi_Venkateshwar_Krupa — use Wi-Fi provisioning
- * (riverclean/boat/wifi_config) to set the network instead.
-//#define CAM_ROUTER_SSID            "Laxmi_Venkateshwar_Krupa"               /* same as main ROUTER_SSID */
-//#define CAM_ROUTER_PASS            "Menis@2020"          /* same as main ROUTER_PASS */
-#define CAM_ROUTER_SSID            ""
-#define CAM_ROUTER_PASS            ""
+ */
+#define CAM_ROUTER_SSID            "Redmi 12"               /* same as main ROUTER_SSID */
+#define CAM_ROUTER_PASS            "123123123"          /* same as main ROUTER_PASS */
 #define CAM_ROUTER_TIMEOUT_MS      15000
 #define CAM_STA_SSID               "RiverClean-Boat"    /* main's DASH_AP_SSID */
 #define CAM_STA_PASS               "riverclean2026"     /* main's DASH_AP_PASS */
