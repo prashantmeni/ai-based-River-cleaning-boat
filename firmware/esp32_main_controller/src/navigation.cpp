@@ -195,18 +195,25 @@ void Navigation::update() {
         _autonomous = false;
     }
 
-    /* Obstacle assessment runs every cycle, even during faults, so a
-     * sensor can re-validate after a transient failure (otherwise the
-     * fault would latch forever). */
+    /* Obstacle assessment: allow single-sensor operation. If one sensor
+     * is invalid, use the other for obstacle avoidance. Only stop when
+     * both sensors are invalid (moving blindly) or when a valid sensor
+     * detects an obstacle in its direction. */
     bool obstacle_stop = false;
     if (_obs) {
         _obs->read();
-        if (_obs->any_invalid()) {
-            obstacle_stop = true;   /* don't move blindly on bad sensors */
-            if (_safety) _safety->set_sensors_bad(true);
-        } else {
+        bool left_valid = _obs->left_valid();
+        bool right_valid = _obs->right_valid();
+        if (left_valid || right_valid) {
+            /* At least one sensor works: use valid one(s) for avoidance.
+             * Clear sensor-bad fault since we can still navigate safely. */
             if (_safety) _safety->set_sensors_bad(false);
-            if (_obs->both_blocked()) obstacle_stop = true;
+            if (left_valid && _obs->left_obstacle()) obstacle_stop = true;
+            if (right_valid && _obs->right_obstacle()) obstacle_stop = true;
+        } else {
+            /* Both sensors invalid: don't move blindly. */
+            obstacle_stop = true;
+            if (_safety) _safety->set_sensors_bad(true);
         }
     }
 
@@ -306,9 +313,17 @@ void Navigation::update() {
                 break;
             }
             if (!_have_detection) {
-                /* Safe search: slow turn or hold position. */
-                if (_motors && !obstacle_stop) _motors->turn_left(SEARCH_SPEED_PWM);
-                else if (_motors) _motors->stop();
+                /* Safe search: turn toward the side with a valid sensor
+                 * so we don't drive blindly into an obstacle. */
+                if (_motors && !obstacle_stop) {
+                    if (_obs && _obs->left_valid()) {
+                        _motors->turn_left(SEARCH_SPEED_PWM);
+                    } else if (_obs && _obs->right_valid()) {
+                        _motors->turn_right(SEARCH_SPEED_PWM);
+                    } else {
+                        _motors->stop();
+                    }
+                } else if (_motors) _motors->stop();
                 if (_conv) _conv->stop();
                 break;
             }
