@@ -7,12 +7,17 @@ import 'package:flutter/material.dart';
 import '../services/app_settings.dart';
 import '../services/connection_service.dart';
 
-/// AI Computer Vision screen — displays the live ESP32-CAM MJPEG stream
-/// with a real-time detection bounding-box overlay, telemetry HUD, and
+/// AI Computer Vision screen — live ESP32-CAM MJPEG stream with real-time
+/// detection bounding-box overlay, telemetry HUD, flashlight control, and
 /// waste separation counters.
-class CameraScreen extends StatelessWidget {
+class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
 
+  @override
+  State<CameraScreen> createState() => _CameraScreenState();
+}
+
+class _CameraScreenState extends State<CameraScreen> {
   @override
   Widget build(BuildContext context) {
     final svc = ConnectionService.instance;
@@ -28,13 +33,13 @@ class CameraScreen extends StatelessWidget {
           children: [
             // Live Camera Stream Card
             Container(
-              height: 300,
+              height: 320,
               width: double.infinity,
               decoration: BoxDecoration(
                 color: const Color(0xFF090D16),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(
-                  color: t != null && t.detection
+                  color: (t != null && t.detection)
                       ? Colors.greenAccent.withValues(alpha: 0.6)
                       : scheme.outlineVariant,
                   width: 1.5,
@@ -49,7 +54,7 @@ class CameraScreen extends StatelessWidget {
                       child: MjpegViewer(
                         url: s.cameraStreamUrl,
                         width: double.infinity,
-                        height: 300,
+                        height: 320,
                       ),
                     )
                   else
@@ -90,7 +95,29 @@ class CameraScreen extends StatelessWidget {
                     Positioned(
                       bottom: 12,
                       right: 12,
-                      child: _FlashToggleButton(),
+                      child: _FlashToggleButton(svc: svc),
+                    ),
+                  // Auto-flash indicator
+                  if (hasStream && s.flashAuto)
+                    Positioned(
+                      bottom: 12,
+                      left: 12,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.amber),
+                        ),
+                        child: const Text(
+                          'AUTO-FLASH',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber,
+                          ),
+                        ),
+                      ),
                     ),
                   // Top HUD bar
                   Padding(
@@ -104,7 +131,7 @@ class CameraScreen extends StatelessWidget {
                               width: 10,
                               height: 10,
                               decoration: BoxDecoration(
-                                color: t != null && t.detection
+                                color: (t != null && t.detection)
                                     ? Colors.greenAccent
                                     : Colors.amber,
                                 shape: BoxShape.circle,
@@ -239,6 +266,70 @@ class CameraScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
+            // Flashlight Controls Card
+            _modernCard(
+              context,
+              title: 'CAMERA FLASHLIGHT (GPIO 4)',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _flashBtn(
+                          icon: Icons.flash_off,
+                          label: 'FLASH OFF',
+                          active: !svc.flashOn,
+                          onTap: () => svc.toggleFlash(false),
+                          color: svc.flashOn ? Colors.grey : Colors.amber,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _flashBtn(
+                          icon: Icons.flash_on,
+                          label: 'FLASH ON',
+                          active: svc.flashOn,
+                          onTap: () => svc.toggleFlash(true),
+                          color: svc.flashOn ? Colors.amber : Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: svc.status != LinkStatus.online
+                              ? null
+                              : () async {
+                                  final found =
+                                      await svc.discoverCamStreamUrl();
+                                  if (found != null && mounted) {
+                                    final st = AppSettings.instance;
+                                    st.cameraStreamUrl = found;
+                                    await st.save();
+                                    if (mounted) setState(() {});
+                                  }
+                                },
+                          icon: const Icon(Icons.wifi, size: 16),
+                          label: const Text('Auto-Detect Stream'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Flash toggles the ESP32-CAM onboard LED (GPIO 4) via ESP-NOW.\n'
+                    'Auto-flash (in Settings) turns it on when waste is detected at night.',
+                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
             // Detection Metrics Card
             if (t != null)
               _modernCard(
@@ -350,6 +441,7 @@ class CameraScreen extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
                         onPressed: () {
+                          // navigate handled by parent tab; show hint
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
                                 content: Text(
@@ -366,6 +458,25 @@ class CameraScreen extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+
+  Widget _flashBtn({
+    required IconData icon,
+    required String label,
+    required bool active,
+    required VoidCallback onTap,
+    required Color color,
+  }) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: active ? color : Colors.grey.withValues(alpha: 0.2),
+        foregroundColor: active ? Colors.black : Colors.white,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+      ),
+      icon: Icon(icon, size: 16),
+      label: Text(label),
     );
   }
 
@@ -449,39 +560,23 @@ class CameraScreen extends StatelessWidget {
 /// Toggle button for the ESP32-CAM flash LED (GPIO 4).
 /// Sends CAM_FLASH diag command via MQTT/WebSocket → main board → ESP-NOW → CAM.
 class _FlashToggleButton extends StatefulWidget {
-  const _FlashToggleButton();
+  final ConnectionService svc;
+  const _FlashToggleButton({required this.svc});
 
   @override
   State<_FlashToggleButton> createState() => _FlashToggleButtonState();
 }
 
 class _FlashToggleButtonState extends State<_FlashToggleButton> {
-  bool _flashOn = false;
-
-  void _toggle() async {
-    setState(() => _flashOn = !_flashOn);
-    final svc = ConnectionService.instance;
-    final err = svc.sendCommand(
-      DiagCmd.camFlash,
-      value: _flashOn ? 1 : 0,
-      durationMs: 0,
-    );
-    if (err != null && mounted) {
-      setState(() => _flashOn = !_flashOn);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Flash $err')),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    final svc = widget.svc;
     return FloatingActionButton.small(
-      onPressed: _toggle,
-      backgroundColor: _flashOn ? Colors.amber : Colors.black87,
-      foregroundColor: _flashOn ? Colors.black : Colors.white,
-      tooltip: _flashOn ? 'Flash ON' : 'Flash OFF',
-      child: Icon(_flashOn ? Icons.highlight : Icons.flash_off),
+      onPressed: () => svc.toggleFlash(!svc.flashOn),
+      backgroundColor: svc.flashOn ? Colors.amber : Colors.black87,
+      foregroundColor: svc.flashOn ? Colors.black : Colors.white,
+      tooltip: svc.flashOn ? 'Flash ON' : 'Flash OFF',
+      child: Icon(svc.flashOn ? Icons.highlight : Icons.flash_off),
     );
   }
 }
@@ -529,21 +624,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
         return;
       }
 
-      // Parse boundary from content-type header
-      final ct = response.headers.contentType.toString();
-      final boundaryMatch = RegExp(r'boundary=([^\s;]+)').firstMatch(ct);
-      if (boundaryMatch == null) {
-        if (mounted) {
-          setState(() => _error = 'No boundary in content-type');
-        }
-        return;
-      }
+      if (mounted) setState(() => _error = null);
 
-    if (mounted) {
-      setState(() => _error = null);
-    }
-
-    await _readFrames(response);
+      await _readFrames(response);
     } catch (e) {
       if (mounted) {
         setState(() => _error = e.toString());

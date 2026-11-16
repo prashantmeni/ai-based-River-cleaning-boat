@@ -17,7 +17,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final _ssidCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   double _pwm = 150;
-  double _duration = 600;
   bool _loaded = false;
   String _savedMsg = '';
   bool _streamSaved = false;
@@ -34,7 +33,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _ssidCtrl.text = s.wifiSsid;
     _passCtrl.text = s.wifiPassword;
     _pwm = s.manualPwm.toDouble();
-    _duration = s.commandDurationMs.toDouble();
     _loaded = true;
   }
 
@@ -58,20 +56,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _save() async {
     final s = AppSettings.instance;
-    final oldUrl = s.endpoint;
     s.endpoint = _endpointCtrl.text.trim();
     s.cameraStreamUrl = _streamCtrl.text.trim();
     s.wifiSsid = _ssidCtrl.text.trim();
     s.wifiPassword = _passCtrl.text;
     s.manualPwm = _pwm.round();
-    s.commandDurationMs = _duration.round();
     await s.save();
-    if (s.endpoint != oldUrl) {
-      await ConnectionService.instance.connect(s.endpoint);
-    }
-    setState(() => _savedMsg = 'Settings & Wi-Fi profile saved successfully.');
+    final svc = ConnectionService.instance;
+    svc.connect(_endpointCtrl.text.trim());
+    setState(() => _savedMsg = 'Settings saved & reconnecting…');
     await Future<void>.delayed(const Duration(seconds: 2));
-    if (mounted) setState(() => _streamSaved = false);
+    if (mounted) setState(() => _savedMsg = '');
   }
 
   Future<void> _provisionWifi() async {
@@ -87,10 +82,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       'ssid': s.wifiSsid,
       'password': s.wifiPassword,
     });
-    final err = ConnectionService.instance.publishRaw(
-      'riverclean/boat/wifi_config',
-      payload,
-    );
+    final svc = ConnectionService.instance;
+    final err = svc.publishRaw('riverclean/boat/wifi_config', payload);
     if (err != null) {
       setState(() => _savedMsg = 'Provisioning failed: $err');
     } else {
@@ -126,7 +119,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _passCtrl.text = s.wifiPassword;
     setState(() {
       _pwm = s.manualPwm.toDouble();
-      _duration = s.commandDurationMs.toDouble();
       _savedMsg = 'Defaults restored.';
     });
     await ConnectionService.instance.connect(s.endpoint);
@@ -254,7 +246,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         const SizedBox(height: 16),
 
-        // Wi-Fi Network Provisioning Card (like mobile phone Wi-Fi settings)
+        // Wi-Fi Network Provisioning Card (STA)
         _modernCard(
           context,
           title: 'BOAT Wi-Fi NETWORK PROVISIONING (STA)',
@@ -262,7 +254,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Configure the target Wi-Fi network that the boat controller connects to automatically upon boot.',
+                'Configure the target Wi-Fi network that the boat controller connects to automatically upon boot. '
+                'Sent to both main controller and ESP32-CAM over MQTT.',
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
               const SizedBox(height: 12),
@@ -317,6 +310,159 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
+              if (_savedMsg.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _savedMsg,
+                    style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontFamily: 'monospace'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Camera Flash Settings Card
+        _modernCard(
+          context,
+          title: 'CAMERA FLASHLIGHT (GPIO 4)',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: SwitchListTile(
+                      title: const Text('Auto-Flash On Waste Detection'),
+                      subtitle: const Text('Turns flash on when waste is detected at night'),
+                      value: AppSettings.instance.flashAuto,
+                      onChanged: (v) async {
+                        final s = AppSettings.instance;
+                        s.flashAuto = v;
+                        await s.save();
+                        setState(() {});
+                      },
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () async {
+                        final svc = ConnectionService.instance;
+                        final st = AppSettings.instance;
+                        final err = svc.toggleFlash(!st.flashManual);
+                        if (err == null) {
+                          st.flashManual = !st.flashManual;
+                          await st.save();
+                          setState(() {});
+                        }
+                      },
+                      icon: Icon(AppSettings.instance.flashManual ? Icons.highlight : Icons.flash_off),
+                      label: Text(AppSettings.instance.flashManual ? 'Flash ON' : 'Flash OFF'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Map Provider Card
+        _modernCard(
+          context,
+          title: 'MAP PROVIDER (GPS RADAR)',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'OpenStreetMap (OSM) is a free, open-source map provider requiring no API key. '
+                'Map tiles are downloaded over the internet when the boat has GPS fix.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 10),
+              ListTile(
+                leading: const Icon(Icons.map),
+                title: const Text('OpenStreetMap'),
+                trailing: AppSettings.instance.mapProvider == 'osm'
+                    ? const Icon(Icons.check, color: Colors.greenAccent)
+                    : null,
+                onTap: () async {
+                  final s = AppSettings.instance;
+                  s.mapProvider = 'osm';
+                  await s.save();
+                  setState(() {});
+                },
+                contentPadding: EdgeInsets.zero,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Serial Monitor Widget
+        _modernCard(
+          context,
+          title: 'SERIAL / DEBUG LOG',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Live debug messages from connection service',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () {
+                      ConnectionService.instance.debugLog;
+                      setState(() {});
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF090D16),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                ),
+                child: ConnectionService.instance.debugLog.lines.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No debug messages yet.',
+                          style: TextStyle(fontSize: 11, color: Colors.grey, fontFamily: 'monospace'),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: ConnectionService.instance.debugLog.lines.length,
+                        itemBuilder: (_, i) {
+                          final line = ConnectionService.instance.debugLog.lines[i];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 1),
+                            child: Text(
+                              line,
+                              style: const TextStyle(
+                                fontSize: 9,
+                                fontFamily: 'monospace',
+                                color: Colors.greenAccent,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
             ],
           ),
         ),
@@ -345,23 +491,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChanged: (v) => setState(() => _pwm = v),
               ),
               const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Command Duration', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  Text(
-                    _duration.round() == 0 ? 'Continuous (latched)' : '${_duration.round()} ms',
-                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              Slider(
-                value: _duration,
-                min: 0,
-                max: 5000,
-                divisions: 50,
-                label: _duration.round() == 0 ? 'Continuous' : '${_duration.round()} ms',
-                onChanged: (v) => setState(() => _duration = v),
+              Text(
+                'Manual commands in Drive run continuously until STOP is pressed.',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic),
               ),
             ],
           ),
@@ -417,6 +549,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _refRow('SoftAP IP Address', '192.168.4.1'),
               _refRow('WebSocket Port', '81'),
               _refRow('ESP-NOW Channel', '1 (fixed)'),
+              _refRow('MQTT Broker', 'broker.hivemq.com:1883'),
+              _refRow('MQTT WSS', 'broker.hivemq.com:8884/mqtt'),
             ],
           ),
         ),

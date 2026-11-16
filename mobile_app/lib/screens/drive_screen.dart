@@ -12,26 +12,102 @@ class DriveScreen extends StatefulWidget {
 
 class _DriveScreenState extends State<DriveScreen> {
   String _feedback = '';
+  // Track toggle states for continuous manual commands
+  bool _forwardOn = false;
+  bool _turnLeftOn = false;
+  bool _turnRightOn = false;
+  bool _conveyorOn = false;
 
-  void _send(int cmd, {int value = 0, int durationMs = 0, String? label}) {
-    final err = ConnectionService.instance.sendCommand(
-      cmd,
-      value: value,
-      durationMs: durationMs,
-    );
-    setState(() => _feedback = err == null
-        ? 'Sent: ${label ?? 'cmd $cmd'}'
-        : 'Failed: $err');
+  @override
+  void dispose() {
+    // Stop everything when leaving the drive screen
+    _stopAll();
+    super.dispose();
   }
 
-  void _drive(int cmd, String label) {
-    final s = AppSettings.instance;
-    _send(
-      cmd,
-      value: s.manualPwm,
-      durationMs: s.commandDurationMs,
-      label: '$label (PWM ${s.manualPwm}, ${s.commandDurationMs == 0 ? 'latched' : '${s.commandDurationMs} ms'})',
+  void _stopAll() {
+    final svc = ConnectionService.instance;
+    svc.sendCommand(DiagCmd.stop, value: 0);
+    svc.sendCommand(DiagCmd.conveyorOff, value: 0);
+    setState(() {
+      _forwardOn = false;
+      _turnLeftOn = false;
+      _turnRightOn = false;
+      _conveyorOn = false;
+    });
+  }
+
+  void _toggleForward() {
+    final svc = ConnectionService.instance;
+    setState(() => _forwardOn = !_forwardOn);
+    if (_forwardOn) {
+      svc.sendToggle(DiagCmd.forward, value: AppSettings.instance.manualPwm);
+      _feedback = 'FORWARD continuous (PWM ${AppSettings.instance.manualPwm})';
+    } else {
+      svc.sendCommand(DiagCmd.stop, value: 0);
+      _feedback = 'FORWARD stopped';
+    }
+  }
+
+  void _toggleTurnLeft() {
+    final svc = ConnectionService.instance;
+    setState(() => _turnLeftOn = !_turnLeftOn);
+    if (_turnLeftOn) {
+      // Stop other manual drives first
+      if (_turnRightOn) {
+        _turnRightOn = false;
+      }
+      svc.sendToggle(DiagCmd.turnLeft, value: AppSettings.instance.manualPwm);
+      _feedback = 'TURN LEFT continuous';
+    } else {
+      svc.sendCommand(DiagCmd.stop, value: 0);
+      _feedback = 'TURN LEFT stopped';
+    }
+  }
+
+  void _toggleTurnRight() {
+    final svc = ConnectionService.instance;
+    setState(() => _turnRightOn = !_turnRightOn);
+    if (_turnRightOn) {
+      if (_turnLeftOn) {
+        _turnLeftOn = false;
+      }
+      svc.sendToggle(DiagCmd.turnRight, value: AppSettings.instance.manualPwm);
+      _feedback = 'TURN RIGHT continuous';
+    } else {
+      svc.sendCommand(DiagCmd.stop, value: 0);
+      _feedback = 'TURN RIGHT stopped';
+    }
+  }
+
+  void _toggleConveyor() {
+    final svc = ConnectionService.instance;
+    setState(() => _conveyorOn = !_conveyorOn);
+    if (_conveyorOn) {
+      svc.sendCommand(DiagCmd.conveyorOn, value: 1);
+      _feedback = 'CONVEYOR ON continuous';
+    } else {
+      svc.sendCommand(DiagCmd.conveyorOff, value: 0);
+      _feedback = 'CONVEYOR OFF';
+    }
+  }
+
+  void _toggleAutonomy() {
+    final svc = ConnectionService.instance;
+    final t = svc.last;
+    final currentlyAuto = t != null && t.autonomous;
+    setState(() {});
+    svc.sendCommand(
+      currentlyAuto ? DiagCmd.autonomousOff : DiagCmd.autonomousOn,
+      value: currentlyAuto ? 0 : 1,
     );
+    _feedback = currentlyAuto ? 'AUTONOMY OFF' : 'AUTONOMY ON';
+  }
+
+  void _clearFaults() {
+    final svc = ConnectionService.instance;
+    svc.sendCommand(DiagCmd.stop, value: 2);
+    _feedback = 'FAULTS CLEARED';
   }
 
   @override
@@ -39,244 +115,215 @@ class _DriveScreenState extends State<DriveScreen> {
     final svc = ConnectionService.instance;
     final s = AppSettings.instance;
     final scheme = Theme.of(context).colorScheme;
-    return ListenableBuilder(
-      listenable: svc,
-      builder: (context, _) {
-        final t = svc.last;
-        final latched = t?.safetyLatched ?? false;
-        final auto = t?.autonomous ?? false;
-        final canDrive = !latched && !auto;
-        final connected = svc.status == LinkStatus.online;
+    final t = svc.last;
+    final latched = t?.safetyLatched ?? false;
+    final auto = t?.autonomous ?? false;
+    final canDrive = !latched && !auto;
+    final connected = svc.status == LinkStatus.online;
 
-        return ListView(
-          padding: const EdgeInsets.all(16),
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (!connected)
+          _banner(
+            scheme.errorContainer,
+            scheme.onErrorContainer,
+            Icons.cloud_off,
+            'Link offline — telemetry or websocket is disconnected.',
+          ),
+        if (latched)
+          _banner(
+            Colors.red.shade900.withValues(alpha: 0.3),
+            Colors.redAccent,
+            Icons.warning_amber_rounded,
+            t?.estop == true
+                ? 'E-STOP LATCHED — clear fault before manual control.'
+                : 'SAFETY STOP (${t?.state}) — motors are locked.',
+          ),
+        if (auto && !latched)
+          _banner(
+            Colors.blue.shade900.withValues(alpha: 0.3),
+            Colors.blueAccent,
+            Icons.smart_toy,
+            'AUTONOMY ENGAGED — manual steering disabled.',
+          ),
+        const SizedBox(height: 8),
+
+        // Mode & Safety Pills
+        Row(
           children: [
-            if (!connected)
-              _banner(
-                scheme.errorContainer,
-                scheme.onErrorContainer,
-                Icons.cloud_off,
-                'Link offline — telemetry or websocket is disconnected.',
-              ),
-            if (latched)
-              _banner(
-                Colors.red.shade900.withValues(alpha: 0.3),
-                Colors.redAccent,
-                Icons.warning_amber_rounded,
-                t?.estop == true
-                    ? 'E-STOP LATCHED — clear fault before manual control.'
-                    : 'SAFETY STOP (${t?.state}) — motors are locked.',
-              ),
-            if (auto && !latched)
-              _banner(
-                Colors.blue.shade900.withValues(alpha: 0.3),
-                Colors.blueAccent,
-                Icons.smart_toy,
-                'AUTONOMY ENGAGED — manual steering disabled.',
-              ),
-            const SizedBox(height: 8),
-
-            // Mode & Safety Pills
-            Row(
-              children: [
-                _pill(
-                  latched ? 'MOTORS LATCHED' : 'MOTORS READY',
-                  latched ? Colors.redAccent : Colors.greenAccent,
-                ),
-                const SizedBox(width: 8),
-                _pill(auto ? 'AUTO MODE' : 'MANUAL DRIVE', auto ? Colors.blueAccent : Colors.grey),
-              ],
+            _pill(
+              latched ? 'MOTORS LATCHED' : 'MOTORS READY',
+              latched ? Colors.redAccent : Colors.greenAccent,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(width: 8),
+            _pill(auto ? 'AUTO MODE' : 'MANUAL DRIVE', auto ? Colors.blueAccent : Colors.grey),
+          ],
+        ),
+        const SizedBox(height: 16),
 
-            // D-Pad / Steering Controls Card
-            _modernCard(
-              context,
-              title: 'MANUAL PROPULSION STEERING',
-              child: Column(
+        // D-Pad / Steering Controls Card
+        _modernCard(
+          context,
+          title: 'MANUAL PROPULSION STEERING',
+          child: Column(
+            children: [
+              Center(
+                child: _controlButton(
+                  context,
+                  icon: Icons.navigation,
+                  label: 'FORWARD',
+                  color: Colors.greenAccent,
+                  enabled: canDrive && connected,
+                  onTap: _toggleForward,
+                  active: _forwardOn,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Center(
-                    child: _controlButton(
-                      context,
-                      icon: Icons.navigation,
-                      label: 'FORWARD',
-                      color: Colors.greenAccent,
-                      enabled: canDrive && connected,
-                      onTap: () => _drive(DiagCmd.forward, 'Forward'),
-                    ),
+                  _controlButton(
+                    context,
+                    icon: Icons.arrow_left,
+                    label: 'LEFT',
+                    color: Colors.cyanAccent,
+                    enabled: canDrive && connected,
+                    onTap: _toggleTurnLeft,
+                    active: _turnLeftOn,
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _controlButton(
-                        context,
-                        icon: Icons.arrow_left,
-                        label: 'LEFT',
-                        color: Colors.cyanAccent,
-                        enabled: canDrive && connected,
-                        onTap: () => _drive(DiagCmd.turnLeft, 'Turn Left'),
-                      ),
-                      const SizedBox(width: 20),
-                      _controlButton(
-                        context,
-                        icon: Icons.stop_circle_outlined,
-                        label: 'STOP',
-                        color: Colors.redAccent,
-                        enabled: connected,
-                        onTap: () => _send(DiagCmd.stop, value: 0, label: 'Stop'),
-                      ),
-                      const SizedBox(width: 20),
-                      _controlButton(
-                        context,
-                        icon: Icons.arrow_right,
-                        label: 'RIGHT',
-                        color: Colors.cyanAccent,
-                        enabled: canDrive && connected,
-                        onTap: () => _drive(DiagCmd.turnRight, 'Turn Right'),
-                      ),
-                    ],
+                  const SizedBox(width: 20),
+                  _controlButton(
+                    context,
+                    icon: Icons.stop_circle_outlined,
+                    label: 'STOP ALL',
+                    color: Colors.redAccent,
+                    enabled: connected,
+                    active: false,
+                    onTap: _stopAll,
+                  ),
+                  const SizedBox(width: 20),
+                  _controlButton(
+                    context,
+                    icon: Icons.arrow_right,
+                    label: 'RIGHT',
+                    color: Colors.cyanAccent,
+                    enabled: canDrive && connected,
+                    onTap: _toggleTurnRight,
+                    active: _turnRightOn,
                   ),
                 ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Throttle & Duration Sliders Card
-            _modernCard(
-              context,
-              title: 'PWM THROTTLE & DURATION',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Throttle PWM', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      Text('${s.manualPwm} / 255', style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  Slider(
-                    value: s.manualPwm.toDouble(),
-                    min: 40,
-                    max: 255,
-                    divisions: 215,
-                    label: '${s.manualPwm}',
-                    onChanged: (v) => setState(() => s.manualPwm = v.round()),
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Run Duration', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                      Text(
-                        s.commandDurationMs == 0 ? 'Continuous (latched)' : '${s.commandDurationMs} ms',
-                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  Slider(
-                    value: s.commandDurationMs.toDouble(),
-                    min: 0,
-                    max: 5000,
-                    divisions: 50,
-                    label: s.commandDurationMs == 0 ? 'Continuous' : '${s.commandDurationMs} ms',
-                    onChanged: (v) => setState(() => s.commandDurationMs = v.round()),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Conveyor & Autonomy Actions
-            _modernCard(
-              context,
-              title: 'MECHANISM & AUTONOMY',
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.teal.shade800,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: connected ? () => _send(DiagCmd.conveyorOn, value: 1, label: 'Conveyor ON') : null,
-                          icon: const Icon(Icons.bolt),
-                          label: const Text('Conveyor ON'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: connected ? () => _send(DiagCmd.conveyorOff, value: 0, label: 'Conveyor OFF') : null,
-                          icon: const Icon(Icons.power_off),
-                          label: const Text('Conveyor OFF'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: auto ? Colors.amber.shade800 : Colors.blue.shade800,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: connected ? () => _send(auto ? diagCmdOffAuto : diagCmdOnAuto, value: auto ? 0 : 1, label: auto ? 'Auto OFF' : 'Auto ON') : null,
-                          icon: Icon(auto ? Icons.pause : Icons.play_arrow),
-                          label: Text(auto ? 'Disable Autonomy' : 'Enable Autonomy'),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.greenAccent,
-                            side: const BorderSide(color: Colors.greenAccent),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: connected ? () => _send(DiagCmd.stop, value: 2, label: 'Clear Faults') : null,
-                          icon: const Icon(Icons.check_circle_outline),
-                          label: const Text('Clear Faults'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            if (_feedback.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _feedback,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-                ),
               ),
             ],
-          ],
-        );
-      },
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Throttle PWM Slider
+        _modernCard(
+          context,
+          title: 'PWM THROTTLE',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Throttle PWM', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  Text('${s.manualPwm} / 255', style: const TextStyle(fontSize: 12, fontFamily: 'monospace', fontWeight: FontWeight.bold)),
+                ],
+              ),
+              Slider(
+                value: s.manualPwm.toDouble(),
+                min: 40,
+                max: 255,
+                divisions: 215,
+                label: '${s.manualPwm}',
+                onChanged: (v) => setState(() => s.manualPwm = v.round()),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Continuous commands run until STOP is pressed. No duration limit.',
+                style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant, fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Conveyor & Autonomy Actions
+        _modernCard(
+          context,
+          title: 'MECHANISM & AUTONOMY',
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _conveyorOn ? Colors.teal.shade800 : Colors.teal.shade800.withValues(alpha: 0.3),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: connected ? _toggleConveyor : null,
+                      icon: Icon(_conveyorOn ? Icons.stop : Icons.bolt),
+                      label: Text(_conveyorOn ? 'Conveyor OFF' : 'Conveyor ON'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: auto ? Colors.amber.shade800 : Colors.blue.shade800,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: connected ? _toggleAutonomy : null,
+                      icon: Icon(auto ? Icons.pause : Icons.play_arrow),
+                      label: Text(auto ? 'Disable Autonomy' : 'Enable Autonomy'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.greenAccent,
+                        side: const BorderSide(color: Colors.greenAccent),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: connected ? _clearFaults : null,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text('Clear Faults'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        if (_feedback.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              _feedback,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+            ),
+          ),
+        ],
+      ],
     );
   }
-
-  static const int diagCmdOnAuto = 7;
-  static const int diagCmdOffAuto = 8;
 
   Widget _modernCard(BuildContext context, {required String title, required Widget child}) {
     final scheme = Theme.of(context).colorScheme;
@@ -312,6 +359,7 @@ class _DriveScreenState extends State<DriveScreen> {
     required String label,
     required Color color,
     required bool enabled,
+    required bool active,
     required VoidCallback onTap,
   }) {
     return InkWell(
@@ -321,23 +369,32 @@ class _DriveScreenState extends State<DriveScreen> {
         width: 95,
         height: 75,
         decoration: BoxDecoration(
-          color: enabled ? color.withValues(alpha: 0.15) : Colors.grey.withValues(alpha: 0.05),
+          color: active
+              ? color.withValues(alpha: 0.35)
+              : enabled
+                  ? color.withValues(alpha: 0.15)
+                  : Colors.grey.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: enabled ? color.withValues(alpha: 0.5) : Colors.grey.withValues(alpha: 0.2),
+            color: active
+                ? color.withValues(alpha: 0.8)
+                : enabled
+                    ? color.withValues(alpha: 0.5)
+                    : Colors.grey.withValues(alpha: 0.2),
+            width: active ? 2 : 1,
           ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: enabled ? color : Colors.grey, size: 28),
+            Icon(icon, color: active ? color : (enabled ? color : Colors.grey), size: 28),
             const SizedBox(height: 4),
             Text(
               label,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
-                color: enabled ? color : Colors.grey,
+                color: active ? color : (enabled ? color : Colors.grey),
               ),
             ),
           ],

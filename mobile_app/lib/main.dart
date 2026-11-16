@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'screens/camera_screen.dart';
 import 'screens/drive_screen.dart';
+import 'screens/map_screen.dart';
 import 'screens/monitor_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/app_settings.dart';
@@ -10,7 +11,6 @@ import 'services/connection_service.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppSettings.instance.load();
-  // Connect after the first frame so the UI can render the status.
   runApp(const RiverCleanApp());
   ConnectionService.instance.connect();
 }
@@ -49,7 +49,7 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
-  static const _titles = ['Monitor', 'AI Camera', 'Drive', 'Settings'];
+  static const _titles = ['Monitor', 'AI Camera', 'GPS Map', 'Drive', 'Settings'];
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +69,7 @@ class _HomeShellState extends State<HomeShell> {
             builder: (context, _) => Padding(
               padding: const EdgeInsets.only(right: 14),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
                     width: 10,
@@ -94,6 +95,7 @@ class _HomeShellState extends State<HomeShell> {
         children: [
           const MonitorScreen(),
           const CameraScreen(),
+          const MapScreen(),
           const DriveScreen(),
           const SettingsScreen(),
         ],
@@ -111,6 +113,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.center_focus_strong_outlined),
             selectedIcon: Icon(Icons.center_focus_strong),
             label: 'AI Camera',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'GPS Map',
           ),
           NavigationDestination(
             icon: Icon(Icons.gamepad_outlined),

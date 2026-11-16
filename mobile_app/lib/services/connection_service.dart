@@ -28,12 +28,36 @@ class DiagCmd {
   static const camFlash = 9;
 }
 
+/// Individual connection link statuses for the dashboard.
+class LinkState {
+  final String name;
+  LinkStatus status;
+  String? detail;
+  DateTime? lastSeen;
+
+  LinkState({required this.name, this.status = LinkStatus.idle, this.detail, this.lastSeen});
+}
+
+/// Circular debug/serial log buffer.
+class DebugLog {
+  static const int _maxLines = 500;
+  final List<String> _lines = [];
+
+  void add(String message) {
+    final ts = DateTime.now().toString().substring(11, 19);
+    _lines.add('[$ts] $message');
+    if (_lines.length > _maxLines) _lines.removeRange(0, _lines.length - _maxLines);
+  }
+
+  List<String> get lines => _lines.reversed.toList();
+  int get count => _lines.length;
+}
+
 /// Connection service — one endpoint, two transports, auto-selected exactly
 /// like the dashboard (`transportForUrl()` in connectionManager.ts):
 /// - URL containing `broker.hivemq.com` or `/mqtt` -> cloud MQTT over WSS,
 ///   telemetry subscribed on [telemetryTopic], commands published as plain
-///   `CMD:` frames (the firmware accepts an optional `#id ` prefix but none
-///   is required on either path).
+///   `CMD:` frames.
 /// - any other `ws://`/`wss://` endpoint -> direct WebSocket to the boat's
 ///   own gateway (ws://192.168.4.1:81, no internet; join the RiverClean-Boat
 ///   AP or the same router). Same JSON schema in, same `CMD:` frames out.
@@ -45,6 +69,15 @@ class ConnectionService extends ChangeNotifier {
   static const commandTopic = 'riverclean/boat/command';
   static const _liveMs = 3000;
 
+  // Per-link status
+  LinkState linkMainInternet = LinkState(name: 'Main → Internet');
+  LinkState linkMainCam = LinkState(name: 'Main → CAM (ESP-NOW)');
+  LinkState linkMainMqtt = LinkState(name: 'Main → MQTT Broker');
+
+  // Debug log
+  final DebugLog debugLog = DebugLog();
+  bool get serialLogEnabled => AppSettings.instance.serialLogEnabled;
+
   LinkStatus status = LinkStatus.idle;
   Telemetry? last;
   DateTime? lastAt;
@@ -53,6 +86,8 @@ class ConnectionService extends ChangeNotifier {
   int parseErrors = 0;
   String lastCommandSent = '';
 
+  bool flashOn = false; // tracked CAM flash state
+
   MqttServerClient? _client;
   WebSocket? _ws;
   Timer? _retry;
@@ -60,11 +95,11 @@ class ConnectionService extends ChangeNotifier {
   bool _want = false;
   bool _updatesAttached = false;
   String _url = '';
+  int _retryBackoff = 3; // seconds, grows on failure
+  final Random _rnd = Random();
 
   String get url => _url.isEmpty ? AppSettings.instance.endpoint : _url;
 
-  /// True when the endpoint is a direct WebSocket (boat gateway) rather
-  /// than a cloud MQTT broker. Mirrors the dashboard's transportForUrl().
   static bool transportIsWs(String url) {
     final u = url.trim().toLowerCase();
     if (u.contains('broker.hivemq.com') || u.contains('/mqtt')) return false;
@@ -72,7 +107,6 @@ class ConnectionService extends ChangeNotifier {
     return false;
   }
 
-  /// "ws" for the direct boat gateway, "mqtt" for a broker.
   String get transport => transportIsWs(url) ? 'ws' : 'mqtt';
 
   Freshness get freshness {
@@ -87,10 +121,15 @@ class ConnectionService extends ChangeNotifier {
   Duration get lastAge =>
       lastAt == null ? const Duration(hours: 99) : DateTime.now().difference(lastAt!);
 
-  /// Connect (or reconnect with a new URL).
+  void _log(String msg) {
+    debugLog.add(msg);
+    notifyListeners();
+  }
+
   Future<void> connect([String? url]) async {
     _url = url ?? AppSettings.instance.endpoint;
     _want = true;
+    _retryBackoff = 3;
     _retry?.cancel();
     await _tryConnect();
   }
@@ -101,6 +140,7 @@ class ConnectionService extends ChangeNotifier {
     _tick?.cancel();
     _closeClient();
     status = LinkStatus.idle;
+    linkMainMqtt.status = LinkStatus.idle;
     notifyListeners();
   }
 
@@ -121,21 +161,16 @@ class ConnectionService extends ChangeNotifier {
 
     if (transportIsWs(_url)) {
       await _tryConnectWs();
-      return;
+    } else {
+      await _tryConnectMqtt(uri);
     }
-    await _tryConnectMqtt(uri);
   }
 
   Future<void> _tryConnectWs() async {
     try {
-      final ws = await WebSocket.connect(_url)
-          .timeout(const Duration(seconds: 10));
+      final ws = await WebSocket.connect(_url).timeout(const Duration(seconds: 10));
       if (!_want) {
-        try {
-          ws.close();
-        } on Exception {
-          // ignore
-        }
+        try { ws.close(); } on Exception {}
         return;
       }
       _ws = ws;
@@ -146,11 +181,14 @@ class ConnectionService extends ChangeNotifier {
         onDone: _onWsClosed,
         onError: (Object e) {
           lastError = e.toString();
+          _log('WS error: $e');
         },
         cancelOnError: false,
       );
       status = LinkStatus.online;
+      linkMainMqtt.status = LinkStatus.online;
       lastError = null;
+      _retryBackoff = 3;
       _tick ??= Timer.periodic(const Duration(seconds: 1), (_) {
         if (_want) notifyListeners();
       });
@@ -158,7 +196,9 @@ class ConnectionService extends ChangeNotifier {
     } on Exception catch (e) {
       if (!_want) return;
       status = LinkStatus.error;
+      linkMainMqtt.status = LinkStatus.error;
       lastError = e.toString();
+      _log('WS connect failed: $e');
       notifyListeners();
       _scheduleRetry();
     }
@@ -169,22 +209,21 @@ class ConnectionService extends ChangeNotifier {
     _ws = null;
     if (!_want) return;
     status = LinkStatus.offline;
+    linkMainMqtt.status = LinkStatus.offline;
     notifyListeners();
     _scheduleRetry();
   }
 
   Future<void> _tryConnectMqtt(Uri uri) async {
     final port = uri.hasPort ? uri.port : (uri.isScheme('wss') ? 443 : 80);
-    final id =
-        'RiverCleanApp-${Random().nextInt(0xffffff).toRadixString(16)}';
+    // Unique client ID to prevent broker collisions
+    final id = 'RiverCleanApp-${DateTime.now().millisecondsSinceEpoch}-${_rnd.nextInt(0xffffff).toRadixString(16)}';
 
-    // The WS connection parses the server string as a URI and requires a
-    // ws/wss scheme, so pass the full URL here.
     final client = MqttServerClient.withPort(_url, id, port);
     client.useWebSocket = true;
     client.logging(on: false);
     client.keepAlivePeriod = 60;
-    client.connectionTimeout = 30000; // 30 seconds in milliseconds
+    client.connectionTimeout = 30000;
     client.onConnected = _onConnected;
     client.onDisconnected = _onDisconnected;
     _updatesAttached = false;
@@ -194,18 +233,16 @@ class ConnectionService extends ChangeNotifier {
       await client.connect().timeout(const Duration(seconds: 15));
     } on Exception catch (e) {
       if (!_want) return;
-      lastError = e.toString();
       status = LinkStatus.error;
-      try {
-        client.disconnect();
-      } on Exception {
-        // ignore
-      }
+      linkMainMqtt.status = LinkStatus.error;
+      lastError = e.toString();
+      _log('MQTT connect failed: $e');
       notifyListeners();
       _scheduleRetry();
       return;
     }
     _client = client;
+    _retryBackoff = 3;
     _tick ??= Timer.periodic(const Duration(seconds: 1), (_) {
       if (_want) notifyListeners();
     });
@@ -219,59 +256,21 @@ class ConnectionService extends ChangeNotifier {
       for (final m in messages) {
         final payload = m.payload;
         if (payload is MqttPublishMessage) {
-          final text =
-              utf8.decode(payload.payload.message, allowMalformed: true);
-          _ingest(text);
+          final text = utf8.decode(payload.payload.message, allowMalformed: true);
+          if (m.topic == telemetryTopic) {
+            _ingestTelemetry(text);
+          } else {
+            _log('MQTT ${m.topic}: $text');
+          }
         }
       }
+    }, onError: (e) {
+      _log('MQTT stream error: $e');
     });
     _updatesAttached = true;
   }
 
-  void _onConnected() {
-    status = LinkStatus.online;
-    lastError = null;
-    _client?.subscribe(telemetryTopic, MqttQos.atMostOnce);
-    final c = _client;
-    if (c != null) _attachUpdates(c);
-    notifyListeners();
-  }
-
-  void _onDisconnected() {
-    if (!_want) return;
-    status = LinkStatus.offline;
-    notifyListeners();
-    _scheduleRetry();
-  }
-
-  void _scheduleRetry() {
-    if (!_want) return;
-    _retry?.cancel();
-    _retry = Timer(const Duration(seconds: 3), _tryConnect);
-  }
-
-  void _closeClient() {
-    final c = _client;
-    _client = null;
-    if (c != null) {
-      try {
-        c.disconnect();
-      } on Exception {
-        // ignore
-      }
-    }
-    final w = _ws;
-    _ws = null;
-    if (w != null) {
-      try {
-        w.close();
-      } on Exception {
-        // ignore
-      }
-    }
-  }
-
-  void _ingest(String text) {
+  void _ingestTelemetry(String text) {
     try {
       final decoded = jsonDecode(text);
       if (decoded is! Map<String, dynamic>) return;
@@ -279,45 +278,113 @@ class ConnectionService extends ChangeNotifier {
       last = Telemetry.fromJson(decoded);
       lastAt = DateTime.now();
       telemetryCount++;
+      linkMainCam.status = LinkStatus.online;
+      linkMainCam.lastSeen = lastAt;
+      linkMainCam.detail = 'comms_ok=${decoded['comms_ok']}, state=${decoded['state']}';
+      linkMainMqtt.status = LinkStatus.online;
+      linkMainMqtt.lastSeen = lastAt;
       notifyListeners();
     } on Exception {
       parseErrors++;
     }
   }
 
-  /// Send a bounded command. Returns null on success, or an error string.
-  /// Payload is a plain `CMD:cmd,value,duration` frame — accepted by the
-  /// firmware MQTT callback and the WebSocket gateway alike.
-  String? sendCommand(int cmd, {int value = 0, int durationMs = 0}) {
-    if (status != LinkStatus.online) {
-      return 'Not connected';
+  void _ingest(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) return;
+      if (decoded['type'] == 'telemetry') {
+        _ingestTelemetry(text);
+      } else if (decoded['type'] == 'ack') {
+        _log('ACK: ${decoded['id']} status=${decoded['status']} cmd=${decoded['cmd']}');
+      } else {
+        _log('MSG: $text');
+      }
+    } on Exception {
+      parseErrors++;
     }
+  }
+
+  void _onConnected() {
+    status = LinkStatus.online;
+    linkMainInternet.status = LinkStatus.online;
+    linkMainMqtt.status = LinkStatus.online;
+    lastError = null;
+    _client?.subscribe(telemetryTopic, MqttQos.atMostOnce);
+    _client?.subscribe(commandTopic, MqttQos.atMostOnce);
+    final c = _client;
+    if (c != null) _attachUpdates(c);
+    _log('MQTT connected: $url');
+    notifyListeners();
+  }
+
+  void _onDisconnected() {
+    if (!_want) return;
+    status = LinkStatus.offline;
+    linkMainInternet.status = LinkStatus.offline;
+    linkMainMqtt.status = LinkStatus.offline;
+    notifyListeners();
+    _scheduleRetry();
+  }
+
+  void _scheduleRetry() {
+    if (!_want) return;
+    _retry?.cancel();
+    _retry = Timer(Duration(seconds: _retryBackoff), _tryConnect);
+    _retryBackoff = (_retryBackoff * 2).clamp(3, 60);
+    _log('Reconnecting in $_retryBackoff s...');
+  }
+
+  void _closeClient() {
+    final c = _client;
+    _client = null;
+    if (c != null) {
+      try { c.disconnect(); } on Exception {}
+    }
+    final w = _ws;
+    _ws = null;
+    if (w != null) {
+      try { w.close(); } on Exception {}
+    }
+  }
+
+  /// Send a toggle command (continuous until explicit stop). No duration.
+  String? sendToggle(int cmd, {int value = 0}) {
+    if (status != LinkStatus.online) return 'Not connected';
+    final v = value.clamp(0, 255).toInt();
+    final text = 'CMD:$cmd,$v,0';
+    return _sendRaw(text);
+  }
+
+  /// Send a bounded command with duration.
+  String? sendCommand(int cmd, {int value = 0, int durationMs = 0}) {
+    if (status != LinkStatus.online) return 'Not connected';
     final v = value.clamp(0, 255).toInt();
     final d = durationMs.clamp(0, 60000).toInt();
     final text = 'CMD:$cmd,$v,$d';
+    return _sendRaw(text);
+  }
 
+  String? _sendRaw(String text) {
     final w = _ws;
     if (w != null) {
       try {
         w.add(text);
         lastCommandSent = text;
+        _log('TX(WS): $text');
         notifyListeners();
         return null;
       } on Exception catch (e) {
         return e.toString();
       }
     }
-
     final c = _client;
     if (c == null) return 'Not connected';
     final builder = MqttClientPayloadBuilder()..addString(text);
     try {
-      c.publishMessage(
-        commandTopic,
-        MqttQos.atMostOnce,
-        builder.payload!,
-      );
+      c.publishMessage(commandTopic, MqttQos.atMostOnce, builder.payload!);
       lastCommandSent = text;
+      _log('TX(MQTT): $text');
       notifyListeners();
       return null;
     } on Exception catch (e) {
@@ -326,19 +393,13 @@ class ConnectionService extends ChangeNotifier {
   }
 
   /// Publish a raw string payload to an arbitrary MQTT topic.
-  /// Used for Wi-Fi provisioning (riverclean/boat/wifi_config) and other
-  /// ad-hoc messages. Returns null on success, or an error string.
   String? publishRaw(String topic, String payload) {
     if (status != LinkStatus.online || _client == null) {
       return 'Not connected';
     }
     final builder = MqttClientPayloadBuilder()..addString(payload);
     try {
-      _client!.publishMessage(
-        topic,
-        MqttQos.atMostOnce,
-        builder.payload!,
-      );
+      _client!.publishMessage(topic, MqttQos.atMostOnce, builder.payload!);
       notifyListeners();
       return null;
     } on Exception catch (e) {
@@ -346,39 +407,51 @@ class ConnectionService extends ChangeNotifier {
     }
   }
 
+  /// Toggle CAM flash via DIAG_CMD_CAM_FLASH (cmd 9).
+  String? toggleFlash(bool on) {
+    flashOn = on;
+    final err = sendToggle(DiagCmd.camFlash, value: on ? 1 : 0);
+    if (err == null) {
+      _log('CAM flash ${on ? 'ON' : 'OFF'}');
+    }
+    return err;
+  }
+
   /// Auto-discover the ESP32-CAM MJPEG stream URL by scanning the local
-  /// /24 subnet for port 8080. Returns the stream URL (e.g.
-  /// http://192.168.31.188:8080/stream) or null if nothing is found.
+  /// /24 subnet for port 8080.
   Future<String?> discoverCamStreamUrl() async {
-    final interfaces = await NetworkInterface.list();
-    for (final iface in interfaces) {
-      for (final addr in iface.addresses) {
-        if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
-          final ip = addr.address;
-          final parts = ip.split('.');
-          if (parts.length != 4) continue;
-          final subnet = '${parts[0]}.${parts[1]}.${parts[2]}.';
-          for (int batchStart = 1; batchStart < 255; batchStart += 20) {
-            final batchEnd = batchStart + 20 > 255 ? 255 : batchStart + 20;
-            final futures = <Future<String?>>[];
-            for (int i = batchStart; i < batchEnd; i++) {
-              futures.add(_probeStreamPort('$subnet$i'));
-            }
-            final results = await Future.wait(futures);
-            for (final r in results) {
-              if (r != null) return r;
+    try {
+      final interfaces = await NetworkInterface.list();
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (addr.type == InternetAddressType.IPv4 && !addr.isLoopback) {
+            final ip = addr.address;
+            final parts = ip.split('.');
+            if (parts.length != 4) continue;
+            final subnet = '${parts[0]}.${parts[1]}.${parts[2]}.';
+            for (int batchStart = 1; batchStart < 255; batchStart += 20) {
+              final batchEnd = batchStart + 20 > 255 ? 255 : batchStart + 20;
+              final futures = <Future<String?>>[];
+              for (int i = batchStart; i < batchEnd; i++) {
+                futures.add(_probeStreamPort('$subnet$i'));
+              }
+              final results = await Future.wait(futures);
+              for (final r in results) {
+                if (r != null) return r;
+              }
             }
           }
         }
       }
+    } catch (e) {
+      _log('Stream discovery error: $e');
     }
     return null;
   }
 
   Future<String?> _probeStreamPort(String ip) async {
     try {
-      final sock = await Socket.connect(ip, 8080)
-          .timeout(const Duration(milliseconds: 300));
+      final sock = await Socket.connect(ip, 8080).timeout(const Duration(milliseconds: 300));
       await sock.close();
       return 'http://$ip:8080/stream';
     } on Exception {
