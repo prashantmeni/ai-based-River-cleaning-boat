@@ -87,6 +87,17 @@ static void network_bringup() {
     bool joined = try_join(CAM_ROUTER_SSID, CAM_ROUTER_PASS,
                            CAM_ROUTER_TIMEOUT_MS);
     if (!joined) {
+        #ifdef CAM_ROUTER_SSID_2
+        if (String(CAM_ROUTER_SSID_2).length() > 0) {
+            Serial.print("[CAM] ");
+            Serial.print(CAM_ROUTER_SSID);
+            Serial.println(" not reachable, trying fallback router...");
+            joined = try_join(CAM_ROUTER_SSID_2, CAM_ROUTER_PASS_2,
+                              CAM_ROUTER_TIMEOUT_MS);
+        }
+        #endif
+    }
+    if (!joined) {
         joined = try_join(CAM_STA_SSID, CAM_STA_PASS, CAM_STA_TIMEOUT_MS);
     }
 

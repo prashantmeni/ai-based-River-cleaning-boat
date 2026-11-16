@@ -324,12 +324,34 @@ void setup() {
     g_rx.begin(DASH_AP_SSID, DASH_AP_PASS);   /* ESP-NOW + dashboard SoftAP */
     
     /* Optional: Connect main controller to home/office router in STA mode
-     * while maintaining the SoftAP for the dashboard & ESP32-CAM. */
+     * while maintaining the SoftAP for the dashboard & ESP32-CAM.
+     * Tries ROUTER_SSID first, then falls back to ROUTER_SSID_2. */
     #ifdef ROUTER_SSID
     if (String(ROUTER_SSID).length() > 0 && String(ROUTER_SSID) != "YOUR_HOME_SSID") {
         WiFi.begin(ROUTER_SSID, ROUTER_PASS);
         Serial.print("[MAIN] Connecting to router: ");
         Serial.println(ROUTER_SSID);
+        uint32_t t0 = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) {
+            delay(250);
+        }
+        if (WiFi.status() != WL_CONNECTED) {
+            WiFi.disconnect();
+            Serial.print("[MAIN] ");
+            Serial.print(ROUTER_SSID);
+            Serial.println(" not reachable, trying fallback...");
+            #ifdef ROUTER_SSID_2
+            if (String(ROUTER_SSID_2).length() > 0) {
+                WiFi.begin(ROUTER_SSID_2, ROUTER_PASS_2);
+                Serial.print("[MAIN] Connecting to fallback router: ");
+                Serial.println(ROUTER_SSID_2);
+                uint32_t t1 = millis();
+                while (WiFi.status() != WL_CONNECTED && millis() - t1 < 15000) {
+                    delay(250);
+                }
+            }
+            #endif
+        }
     }
     #endif
     {

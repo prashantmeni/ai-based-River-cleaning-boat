@@ -22,11 +22,14 @@
 /* --- Optional Router connection for Dual AP+STA mode ---
  * Leave blank ("") if you want AP-only mode. Fill in your router details
  * if you want the boat to join your Wi-Fi while still hosting its own AP.
+ *
+ * Two networks can be configured: the board tries ROUTER_SSID first,
+ * then falls back to ROUTER_SSID_2 if the first is not reachable.
  */
-//#define ROUTER_SSID                "Laxmi_Venkateshwar_Krupa"
-//#define ROUTER_PASS                "Menis@2020"
 #define ROUTER_SSID                "Redmi 12"
 #define ROUTER_PASS                "123123123"
+#define ROUTER_SSID_2              "Laxmi_Venkateshwar_Krupa"
+#define ROUTER_PASS_2              "Menis@2020"
 
 /* --- Free Public MQTT Broker (broker.hivemq.com) --- */
 #define MQTT_BROKER_HOST           "broker.hivemq.com"
