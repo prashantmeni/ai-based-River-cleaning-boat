@@ -451,6 +451,13 @@ class ConnectionService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Ensure Bluetooth is enabled
+      final isEnabled = await _bluetooth.isEnabled;
+      if (isEnabled != true) {
+        await _bluetooth.requestEnable();
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
       await for (final r in _bluetooth.startDiscovery()) {
         _discoveredDevices.add(r);
         notifyListeners();
