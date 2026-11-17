@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 
 import '../models/telemetry.dart';
 import 'app_settings.dart';
@@ -53,14 +54,13 @@ class DebugLog {
   int get count => _lines.length;
 }
 
-/// Connection service — one endpoint, two transports, auto-selected exactly
-/// like the dashboard (`transportForUrl()` in connectionManager.ts):
-/// - URL containing `broker.hivemq.com` or `/mqtt` -> cloud MQTT over WSS,
-///   telemetry subscribed on [telemetryTopic], commands published as plain
-///   `CMD:` frames.
-/// - any other `ws://`/`wss://` endpoint -> direct WebSocket to the boat's
-///   own gateway (ws://192.168.4.1:81, no internet; join the RiverClean-Boat
-///   AP or the same router). Same JSON schema in, same `CMD:` frames out.
+/// Connection service — supports Bluetooth (ESP32 SPP) with automatic
+/// fallback to MQTT/WebSocket when Bluetooth is out of range or fails.
+///
+/// Transport selection:
+/// - If Bluetooth is enabled and device paired: try Bluetooth first
+/// - If Bluetooth fails or times out: fall back to MQTT/WebSocket endpoint
+/// - Each transport tracked independently for dashboard status display
 class ConnectionService extends ChangeNotifier {
   ConnectionService._();
   static final ConnectionService instance = ConnectionService._();
@@ -73,11 +73,13 @@ class ConnectionService extends ChangeNotifier {
   LinkState linkMainInternet = LinkState(name: 'Main → Internet');
   LinkState linkMainCam = LinkState(name: 'Main → CAM (ESP-NOW)');
   LinkState linkMainMqtt = LinkState(name: 'Main → MQTT Broker');
+  LinkState linkMainBluetooth = LinkState(name: 'Main → Bluetooth (SPP)');
 
   // Debug log
   final DebugLog debugLog = DebugLog();
   bool get serialLogEnabled => AppSettings.instance.serialLogEnabled;
 
+  // Current active transport
   LinkStatus status = LinkStatus.idle;
   Telemetry? last;
   DateTime? lastAt;
@@ -88,18 +90,28 @@ class ConnectionService extends ChangeNotifier {
 
   bool flashOn = false; // tracked CAM flash state
 
-  MqttServerClient? _client;
+  // MQTT / WebSocket
+  MqttServerClient? _mqttClient;
   WebSocket? _ws;
   Timer? _retry;
   Timer? _tick;
   bool _want = false;
   bool _updatesAttached = false;
   String _url = '';
-  int _retryBackoff = 3; // seconds, grows on failure
+  int _retryBackoff = 3;
   final Random _rnd = Random();
+
+  // Bluetooth
+  final FlutterBluetoothSerial _bluetooth = FlutterBluetoothSerial.instance;
+  BluetoothConnection? _bluetoothConnection;
+  StreamSubscription<List<int>>? _bluetoothSubscription;
+  BluetoothDevice? _selectedDevice;
+  List<BluetoothDiscoveryResult> _discoveredDevices = [];
 
   String get url => _url.isEmpty ? AppSettings.instance.endpoint : _url;
 
+  /// True when the endpoint is a direct WebSocket (boat gateway) rather
+  /// than a cloud MQTT broker.
   static bool transportIsWs(String url) {
     final u = url.trim().toLowerCase();
     if (u.contains('broker.hivemq.com') || u.contains('/mqtt')) return false;
@@ -107,7 +119,13 @@ class ConnectionService extends ChangeNotifier {
     return false;
   }
 
-  String get transport => transportIsWs(url) ? 'ws' : 'mqtt';
+  /// "bluetooth" / "ws" / "mqtt" for the active transport.
+  String get transport {
+    if (_bluetoothConnection != null && _bluetoothConnection!.isConnected) {
+      return 'bluetooth';
+    }
+    return transportIsWs(url) ? 'ws' : 'mqtt';
+  }
 
   Freshness get freshness {
     if (status != LinkStatus.online) return Freshness.waiting;
@@ -126,11 +144,26 @@ class ConnectionService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ========================================================================
+  // CONNECTION MANAGEMENT
+  // ========================================================================
+
   Future<void> connect([String? url]) async {
     _url = url ?? AppSettings.instance.endpoint;
     _want = true;
     _retryBackoff = 3;
     _retry?.cancel();
+
+    // Load saved Bluetooth device address
+    final s = AppSettings.instance;
+    if (s.btDeviceAddress.isNotEmpty) {
+      try {
+        _selectedDevice = BluetoothDevice(address: s.btDeviceAddress, name: 'Saved Device');
+      } catch (e) {
+        _log('Failed to load saved Bluetooth device: $e');
+      }
+    }
+
     await _tryConnect();
   }
 
@@ -138,19 +171,71 @@ class ConnectionService extends ChangeNotifier {
     _want = false;
     _retry?.cancel();
     _tick?.cancel();
-    _closeClient();
+    _closeAll();
     status = LinkStatus.idle;
     linkMainMqtt.status = LinkStatus.idle;
+    linkMainBluetooth.status = LinkStatus.idle;
     notifyListeners();
   }
 
   Future<void> _tryConnect() async {
     if (!_want) return;
-    _closeClient();
-    status = LinkStatus.connecting;
-    lastError = null;
-    notifyListeners();
 
+    // Try Bluetooth first if enabled and device selected
+    final s = AppSettings.instance;
+    if (s.flashManual || _selectedDevice != null) {
+      // Check if Bluetooth is enabled
+      final isEnabled = await _bluetooth.isEnabled;
+      if (isEnabled == true) {
+        if (_selectedDevice != null) {
+          await _connectBluetooth(_selectedDevice!);
+          if (_bluetoothConnection != null && _bluetoothConnection!.isConnected) {
+            status = LinkStatus.online;
+            linkMainBluetooth.status = LinkStatus.online;
+            lastError = null;
+            _retryBackoff = 3;
+            _tick ??= Timer.periodic(const Duration(seconds: 1), (_) {
+              if (_want) notifyListeners();
+            });
+            notifyListeners();
+            return; // Bluetooth connected, skip MQTT
+          }
+        }
+      }
+    }
+
+    // Fall back to MQTT/WebSocket
+    await _tryConnectMqttWs();
+  }
+
+  Future<void> _connectBluetooth(BluetoothDevice device) async {
+    try {
+      _log('Connecting Bluetooth to ${device.name} (${device.address})...');
+      final connection = await BluetoothConnection.toAddress(device.address);
+      _bluetoothConnection = connection;
+      _bluetoothSubscription = connection.input!.listen((data) {
+        final text = utf8.decode(data, allowMalformed: true);
+        _ingest(text);
+      }, onDone: () {
+        _log('Bluetooth disconnected');
+        _bluetoothConnection = null;
+        _bluetoothSubscription?.cancel();
+        _bluetoothSubscription = null;
+        if (_want) {
+          linkMainBluetooth.status = LinkStatus.offline;
+          notifyListeners();
+          _scheduleRetry();
+        }
+      });
+      _log('Bluetooth connected: ${device.name}');
+    } on Exception catch (e) {
+      _log('Bluetooth connect failed: $e');
+      _bluetoothConnection = null;
+      rethrow;
+    }
+  }
+
+  Future<void> _tryConnectMqttWs() async {
     final uri = Uri.tryParse(_url);
     if (uri == null || !(uri.isScheme('ws') || uri.isScheme('wss'))) {
       status = LinkStatus.error;
@@ -216,7 +301,6 @@ class ConnectionService extends ChangeNotifier {
 
   Future<void> _tryConnectMqtt(Uri uri) async {
     final port = uri.hasPort ? uri.port : (uri.isScheme('wss') ? 443 : 80);
-    // Unique client ID to prevent broker collisions
     final id = 'RiverCleanApp-${DateTime.now().millisecondsSinceEpoch}-${_rnd.nextInt(0xffffff).toRadixString(16)}';
 
     final client = MqttServerClient.withPort(_url, id, port);
@@ -241,7 +325,7 @@ class ConnectionService extends ChangeNotifier {
       _scheduleRetry();
       return;
     }
-    _client = client;
+    _mqttClient = client;
     _retryBackoff = 3;
     _tick ??= Timer.periodic(const Duration(seconds: 1), (_) {
       if (_want) notifyListeners();
@@ -310,9 +394,9 @@ class ConnectionService extends ChangeNotifier {
     linkMainInternet.status = LinkStatus.online;
     linkMainMqtt.status = LinkStatus.online;
     lastError = null;
-    _client?.subscribe(telemetryTopic, MqttQos.atMostOnce);
-    _client?.subscribe(commandTopic, MqttQos.atMostOnce);
-    final c = _client;
+    _mqttClient?.subscribe(telemetryTopic, MqttQos.atMostOnce);
+    _mqttClient?.subscribe(commandTopic, MqttQos.atMostOnce);
+    final c = _mqttClient;
     if (c != null) _attachUpdates(c);
     _log('MQTT connected: $url');
     notifyListeners();
@@ -335,22 +419,65 @@ class ConnectionService extends ChangeNotifier {
     _log('Reconnecting in $_retryBackoff s...');
   }
 
-  void _closeClient() {
-    final c = _client;
-    _client = null;
+  void _closeAll() {
+    // Close MQTT
+    final c = _mqttClient;
+    _mqttClient = null;
     if (c != null) {
       try { c.disconnect(); } on Exception {}
     }
+    // Close WebSocket
     final w = _ws;
     _ws = null;
     if (w != null) {
       try { w.close(); } on Exception {}
     }
+    // Close Bluetooth
+    final bt = _bluetoothConnection;
+    _bluetoothConnection = null;
+    _bluetoothSubscription?.cancel();
+    _bluetoothSubscription = null;
+    if (bt != null) {
+      try { bt.dispose(); } on Exception {}
+    }
   }
+
+  // ========================================================================
+  // BLUETOOTH DEVICE DISCOVERY
+  // ========================================================================
+
+  Future<List<BluetoothDiscoveryResult>> scanBluetooth() async {
+    _discoveredDevices = [];
+    notifyListeners();
+
+    try {
+      await for (final r in _bluetooth.startDiscovery()) {
+        _discoveredDevices.add(r);
+        notifyListeners();
+      }
+    } catch (e) {
+      _log('Bluetooth scan error: $e');
+    } finally {
+      notifyListeners();
+    }
+    return _discoveredDevices;
+  }
+
+  Future<void> selectDevice(BluetoothDevice device) async {
+    _selectedDevice = device;
+    final s = AppSettings.instance;
+    s.btDeviceAddress = device.address;
+    await s.save();
+    notifyListeners();
+  }
+
+  // ========================================================================
+  // COMMAND SENDING
+  // ========================================================================
 
   /// Send a toggle command (continuous until explicit stop). No duration.
   String? sendToggle(int cmd, {int value = 0}) {
-    if (status != LinkStatus.online) return 'Not connected';
+    if (!_isConnected) return 'Not connected';
     final v = value.clamp(0, 255).toInt();
     final text = 'CMD:$cmd,$v,0';
     return _sendRaw(text);
@@ -358,28 +485,55 @@ class ConnectionService extends ChangeNotifier {
 
   /// Send a bounded command with duration.
   String? sendCommand(int cmd, {int value = 0, int durationMs = 0}) {
-    if (status != LinkStatus.online) return 'Not connected';
+    if (!_isConnected) return 'Not connected';
     final v = value.clamp(0, 255).toInt();
     final d = durationMs.clamp(0, 60000).toInt();
     final text = 'CMD:$cmd,$v,$d';
     return _sendRaw(text);
   }
 
+  bool get _isConnected {
+    if (_bluetoothConnection != null && _bluetoothConnection!.isConnected) {
+      return true;
+    }
+    if (status == LinkStatus.online) return true;
+    return false;
+  }
+
   String? _sendRaw(String text) {
-    final w = _ws;
-    if (w != null) {
+    // Try Bluetooth first
+    final bt = _bluetoothConnection;
+    if (bt != null && bt.isConnected) {
       try {
-        w.add(text);
+        bt.output.add(utf8.encode(text + '\n'));
+        bt.output.allSent;
         lastCommandSent = text;
-        _log('TX(WS): $text');
+        _log('TX(BT): $text');
         notifyListeners();
         return null;
       } on Exception catch (e) {
-        return e.toString();
+        _log('Bluetooth TX failed: $e');
+        // Fall through to MQTT
       }
     }
-    final c = _client;
-    if (c == null) return 'Not connected';
+
+    // Fall back to MQTT/WebSocket
+    final c = _mqttClient;
+    if (c == null) {
+      final w = _ws;
+      if (w != null) {
+        try {
+          w.add(text);
+          lastCommandSent = text;
+          _log('TX(WS): $text');
+          notifyListeners();
+          return null;
+        } on Exception catch (e) {
+          return e.toString();
+        }
+      }
+      return 'Not connected';
+    }
     final builder = MqttClientPayloadBuilder()..addString(text);
     try {
       c.publishMessage(commandTopic, MqttQos.atMostOnce, builder.payload!);
@@ -393,13 +547,30 @@ class ConnectionService extends ChangeNotifier {
   }
 
   /// Publish a raw string payload to an arbitrary MQTT topic.
+  /// Used for Wi-Fi provisioning (riverclean/boat/wifi_config) and other
+  /// ad-hoc messages. Returns null on success, or an error string.
   String? publishRaw(String topic, String payload) {
-    if (status != LinkStatus.online || _client == null) {
+    if (!_isConnected) {
       return 'Not connected';
     }
     final builder = MqttClientPayloadBuilder()..addString(payload);
     try {
-      _client!.publishMessage(topic, MqttQos.atMostOnce, builder.payload!);
+      // Try Bluetooth first
+      final bt = _bluetoothConnection;
+      if (bt != null && bt.isConnected) {
+        try {
+          bt.output.add(utf8.encode(payload + '\n'));
+          bt.output.allSent;
+          notifyListeners();
+          return null;
+        } on Exception catch (e) {
+          _log('Bluetooth TX failed: $e');
+        }
+      }
+      // Fall back to MQTT
+      final c = _mqttClient;
+      if (c == null) return 'Not connected';
+      c.publishMessage(topic, MqttQos.atMostOnce, builder.payload!);
       notifyListeners();
       return null;
     } on Exception catch (e) {
@@ -417,8 +588,10 @@ class ConnectionService extends ChangeNotifier {
     return err;
   }
 
-  /// Auto-discover the ESP32-CAM MJPEG stream URL by scanning the local
-  /// /24 subnet for port 8080.
+  // ========================================================================
+  // CAM STREAM DISCOVERY
+  // ========================================================================
+
   Future<String?> discoverCamStreamUrl() async {
     try {
       final interfaces = await NetworkInterface.list();

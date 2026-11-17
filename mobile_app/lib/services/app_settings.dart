@@ -14,6 +14,7 @@ class AppSettings {
   static const _kFlashManual = 'riverclean.flashManual';
   static const _kMapProvider = 'riverclean.mapProvider';
   static const _kSerialLogEnabled = 'riverclean.serialLogEnabled';
+  static const _kBtDeviceAddress = 'riverclean.btDeviceAddress';
 
   String endpoint = 'wss://broker.hivemq.com:8884/mqtt';
   int manualPwm = 150;
@@ -21,14 +22,11 @@ class AppSettings {
   String wifiSsid = 'Laxmi_Venkateshwar_Krupa';
   String wifiPassword = '';
 
-  /// Camera flash auto-on (based on time/night mode heuristic)
   bool flashAuto = false;
-  /// Camera flash manual override
   bool flashManual = false;
-  /// Map provider: 'osm' (OpenStreetMap) or 'none'
   String mapProvider = 'osm';
-  /// Enable serial/debug log widget in settings
   bool serialLogEnabled = true;
+  String btDeviceAddress = '';
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
@@ -41,6 +39,7 @@ class AppSettings {
     flashManual = p.getBool(_kFlashManual) ?? flashManual;
     mapProvider = p.getString(_kMapProvider) ?? mapProvider;
     serialLogEnabled = p.getBool(_kSerialLogEnabled) ?? serialLogEnabled;
+    btDeviceAddress = p.getString(_kBtDeviceAddress) ?? btDeviceAddress;
   }
 
   Future<void> save() async {
@@ -54,6 +53,7 @@ class AppSettings {
     await p.setBool(_kFlashManual, flashManual);
     await p.setString(_kMapProvider, mapProvider);
     await p.setBool(_kSerialLogEnabled, serialLogEnabled);
+    await p.setString(_kBtDeviceAddress, btDeviceAddress);
   }
 
   Future<void> reset() async {
@@ -67,6 +67,7 @@ class AppSettings {
     await p.remove(_kFlashManual);
     await p.remove(_kMapProvider);
     await p.remove(_kSerialLogEnabled);
+    await p.remove(_kBtDeviceAddress);
     endpoint = 'wss://broker.hivemq.com:8884/mqtt';
     manualPwm = 150;
     cameraStreamUrl = '';
@@ -76,5 +77,6 @@ class AppSettings {
     flashManual = false;
     mapProvider = 'osm';
     serialLogEnabled = true;
+    btDeviceAddress = '';
   }
 }
