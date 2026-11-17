@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <BluetoothSerial.h>
 #include "boat_config.h"
 #include "motor.h"
 #include "obstacle.h"
@@ -35,6 +36,7 @@ static Safety g_safety;
 static SerialRx g_rx;                   /* ESP-NOW link <- ESP32-CAM */
 static Navigation g_nav;
 static Telemetry g_telemetry;
+static BluetoothSerial SerialBT;        /* Bluetooth Classic SPP */
 
 /* --- Serial callbacks --- */
 static void on_ai_detection(const ai_detection_payload_t *det) {
@@ -288,6 +290,33 @@ static void poll_usb_commands() {
     }
 }
 
+static void poll_bt_commands() {
+    static char line[64];
+    static size_t len = 0;
+    while (SerialBT.available()) {
+        char c = (char)SerialBT.read();
+        if (c == '\r' || c == '\n') {
+            if (len > 0) {
+                line[len] = '\0';
+                if (strncmp(line, "CMD:", 4) == 0) {
+                    unsigned int cmd = 0, val = 0, dur = 0;
+                    if (sscanf(line + 4, "%u,%u,%u", &cmd, &val, &dur) == 3 &&
+                        cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_CAM_FLASH) {
+                        g_nav.on_diag_command((uint8_t)cmd, (uint8_t)val,
+                                              (uint16_t)dur);
+                        SerialBT.print("[MAIN] CMD executed\n");
+                    }
+                }
+                len = 0;
+            }
+        } else if (len < sizeof(line) - 1) {
+            line[len++] = c;
+        } else {
+            len = 0;    /* oversized line: drop */
+        }
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     while (!Serial) { ; }
@@ -375,6 +404,10 @@ void setup() {
         [](uint8_t c, uint8_t v, uint16_t d) { on_ai_diag_command(c, v, d); });
     ws_gateway_begin();
 
+    /* Bluetooth Classic SPP for phone app communication */
+    SerialBT.begin("RiverClean-Boat");
+    Serial.println("[MAIN] Bluetooth Classic SPP started: RiverClean-Boat");
+
     /* MQTT setup */
     s_mqtt_client.setServer(MQTT_BROKER_HOST, MQTT_BROKER_PORT);
     s_mqtt_client.setCallback(mqtt_callback);
@@ -438,6 +471,7 @@ void loop() {
     update_status_indicators();
 
     poll_usb_commands();    /* dashboard manual commands over USB */
+    poll_bt_commands();     /* Bluetooth Classic SPP commands */
     ws_gateway_update();    /* WebSocket clients + command handling */
     if (WiFi.status() == WL_CONNECTED) {
         maintain_mqtt();
@@ -462,6 +496,9 @@ void loop() {
         if (n > 0) {
             Serial.write(buf, (size_t)n);              /* USB bridge */
             ws_gateway_on_telemetry(buf, (size_t)n);   /* WebSocket */
+            if (SerialBT.hasClient()) {
+                SerialBT.write(buf, (size_t)n);        /* Bluetooth SPP */
+            }
             if (s_mqtt_client.connected()) {
                 if (!s_mqtt_client.publish(MQTT_TELEMETRY_TOPIC, buf, (size_t)n) &&
                     now - s_last_mqtt_pub_err_ms >= 5000) {
