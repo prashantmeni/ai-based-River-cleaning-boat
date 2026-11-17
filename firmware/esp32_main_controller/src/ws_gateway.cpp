@@ -61,7 +61,7 @@ static void handle_text(uint8_t num, const uint8_t *payload, size_t len) {
     if (strncmp(body, "CMD:", 4) == 0) {
         unsigned int cmd = 0, val = 0, dur = 0;
         if (sscanf(body + 4, "%u,%u,%u", &cmd, &val, &dur) == 3 &&
-            cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_AUTONOMOUS_OFF &&
+            cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_CAM_FLASH &&
             val <= 255 && dur <= 60000 && s_cmd_fn) {
             s_cmd_fn((uint8_t)cmd, (uint8_t)val, (uint16_t)dur);
             send_ack(num, safe_id, "ok", (int)cmd, "");

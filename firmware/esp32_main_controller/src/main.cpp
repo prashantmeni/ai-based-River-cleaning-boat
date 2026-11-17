@@ -152,7 +152,7 @@ static void handle_mqtt_command(char* topic, byte* payload, unsigned int length)
     unsigned int cmd = 0, val = 0, dur = 0;
     bool ok = strncmp(body, "CMD:", 4) == 0 &&
               sscanf(body + 4, "%u,%u,%u", &cmd, &val, &dur) == 3 &&
-              cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_AUTONOMOUS_OFF;
+              cmd >= DIAG_CMD_STOP && cmd <= DIAG_CMD_CAM_FLASH;
     if (ok) {
         on_ai_diag_command((uint8_t)cmd, (uint8_t)val, (uint16_t)dur);
         Serial.println("[MQTT] Command executed successfully.");
