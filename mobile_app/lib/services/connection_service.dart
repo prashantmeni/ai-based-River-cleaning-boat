@@ -478,6 +478,37 @@ class ConnectionService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Connect directly by MAC address (more reliable than scanning)
+  Future<void> connectByMacAddress(String address) async {
+    try {
+      _selectedDevice = BluetoothDevice(address: address, name: 'Saved Device');
+      final s = AppSettings.instance;
+      s.btDeviceAddress = address;
+      await s.save();
+      notifyListeners();
+
+      final isEnabled = await _bluetooth.isEnabled;
+      if (isEnabled != true) {
+        await _bluetooth.requestEnable();
+        await Future.delayed(const Duration(seconds: 2));
+      }
+
+      await _connectBluetooth(_selectedDevice!);
+      if (_bluetoothConnection != null && _bluetoothConnection!.isConnected) {
+        status = LinkStatus.online;
+        linkMainBluetooth.status = LinkStatus.online;
+        lastError = null;
+        _retryBackoff = 3;
+        _log('Bluetooth connected via MAC: $address');
+      } else {
+        _log('Bluetooth connection failed: not connected');
+      }
+    } on Exception catch (e) {
+      _log('Bluetooth connect failed: $e');
+      rethrow;
+    }
+  }
+
   // ========================================================================
   // COMMAND SENDING
   // ========================================================================
