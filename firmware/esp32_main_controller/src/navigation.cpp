@@ -195,25 +195,27 @@ void Navigation::update() {
         _autonomous = false;
     }
 
-    /* Obstacle assessment: allow single-sensor operation. If one sensor
-     * is invalid, use the other for obstacle avoidance. Only stop when
-     * both sensors are invalid (moving blindly) or when a valid sensor
-     * detects an obstacle in its direction. */
+    /* Obstacle assessment: allow single-sensor or no-sensor operation.
+     * If one sensor works, use it for obstacle avoidance. If both sensors
+     * are removed/invalid (boat running with bin sensor only on GPIO 32/33),
+     * allow autonomous movement without obstacle avoidance — the bin sensor
+     * on left GPIO still works for bin level detection. */
     bool obstacle_stop = false;
     if (_obs) {
         _obs->read();
         bool left_valid = _obs->left_valid();
         bool right_valid = _obs->right_valid();
         if (left_valid || right_valid) {
-            /* At least one sensor works: use valid one(s) for avoidance.
-             * Clear sensor-bad fault since we can still navigate safely. */
+            /* At least one sensor works: use valid one(s) for avoidance. */
             if (_safety) _safety->set_sensors_bad(false);
             if (left_valid && _obs->left_obstacle()) obstacle_stop = true;
             if (right_valid && _obs->right_obstacle()) obstacle_stop = true;
         } else {
-            /* Both sensors invalid: don't move blindly. */
-            obstacle_stop = true;
-            if (_safety) _safety->set_sensors_bad(true);
+            /* Both ultrasonic sensors removed/disabled: allow movement.
+             * Bin level sensor (if on left GPIO 32/33) still reports
+             * bin_distance_cm independently via telemetry. */
+            obstacle_stop = false;
+            if (_safety) _safety->set_sensors_bad(false);
         }
     }
 
@@ -321,7 +323,8 @@ void Navigation::update() {
                     } else if (_obs && _obs->right_valid()) {
                         _motors->turn_right(SEARCH_SPEED_PWM);
                     } else {
-                        _motors->stop();
+                        /* Both sensors removed: keep turning left to scan. */
+                        _motors->turn_left(SEARCH_SPEED_PWM);
                     }
                 } else if (_motors) _motors->stop();
                 if (_conv) _conv->stop();

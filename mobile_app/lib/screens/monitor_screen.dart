@@ -145,17 +145,17 @@ class MonitorScreen extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // Water Quality & Sensors Card (TDS + Ultrasonic)
+              // Water Quality & Sensors Card (TDS Only - Ultrasonics removed)
               _modernCard(
                 context,
-                title: 'WATER QUALITY & OBSTACLES',
+                title: 'WATER QUALITY (TDS)',
                 child: Column(
                   children: [
                     Row(
                       children: [
                         Expanded(
                           child: Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
                               borderRadius: BorderRadius.circular(10),
@@ -168,7 +168,7 @@ class MonitorScreen extends StatelessWidget {
                                 Text(
                                   t.tdsPpm >= 0 ? '${t.tdsPpm} ppm' : 'Invalid',
                                   style: TextStyle(
-                                    fontSize: 18,
+                                    fontSize: 24,
                                     fontWeight: FontWeight.bold,
                                     color: t.tdsPpm >= 0 && t.tdsPpm < 500 ? Colors.cyanAccent : Colors.amber,
                                   ),
@@ -207,10 +207,6 @@ class MonitorScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    _distanceBar('Ultrasonic Left', t.leftCm, scheme),
-                    const SizedBox(height: 8),
-                    _distanceBar('Ultrasonic Right', t.rightCm, scheme),
                   ],
                 ),
               ),
@@ -219,7 +215,7 @@ class MonitorScreen extends StatelessWidget {
               // Collection Bin Level Card (Ultrasonic level + Buzzer alarm)
               _modernCard(
                 context,
-                title: 'COLLECTION BIN LEVEL STATUS',
+                title: 'COLLECTION BIN LEVEL',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -228,17 +224,25 @@ class MonitorScreen extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            Icon(
-                              t.binFull ? Icons.warning_rounded : Icons.delete_outline,
-                              color: t.binFull ? Colors.redAccent : Colors.cyanAccent,
-                              size: 24,
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: t.binFull ? Colors.redAccent.withValues(alpha: 0.2) : Colors.greenAccent.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: t.binFull ? Colors.redAccent : Colors.greenAccent),
+                              ),
+                              child: Icon(
+                                t.binFull ? Icons.warning_rounded : Icons.delete_outline,
+                                color: t.binFull ? Colors.redAccent : Colors.greenAccent,
+                                size: 24,
+                              ),
                             ),
-                            const SizedBox(width: 10),
+                            const SizedBox(width: 12),
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  t.binFull ? 'BIN FULL (BUZZER ACTIVE)' : 'BIN CAPACITY NORMAL',
+                                  t.binFull ? 'BIN FULL — BUZZER ACTIVE' : 'BIN CAPACITY NORMAL',
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
@@ -246,7 +250,7 @@ class MonitorScreen extends StatelessWidget {
                                   ),
                                 ),
                                 Text(
-                                  t.binDistanceCm > 0 ? 'Debris clearance: ${t.binDistanceCm.toStringAsFixed(1)} cm' : 'Sensor idle',
+                                  t.binDistanceCm > 0 ? 'Debris distance: ${t.binDistanceCm.toStringAsFixed(1)} cm' : 'Bin sensor idle',
                                   style: const TextStyle(fontSize: 11, color: Colors.grey),
                                 ),
                               ],
@@ -257,14 +261,41 @@ class MonitorScreen extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: LinearProgressIndicator(
-                        value: t.binFull ? 1.0 : (t.binDistanceCm > 0 ? (1.0 - (t.binDistanceCm / 30.0)).clamp(0.0, 1.0) : 0.0),
-                        minHeight: 8,
-                        backgroundColor: scheme.surfaceContainerHighest,
-                        color: t.binFull ? Colors.redAccent : Colors.cyanAccent,
-                      ),
+                    // Bin level gauge
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Fill Level', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                              const SizedBox(height: 6),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: LinearProgressIndicator(
+                                  value: t.binDistanceCm > 0 ? (1.0 - (t.binDistanceCm / 30.0)).clamp(0.0, 1.0) : 0.0,
+                                  minHeight: 12,
+                                  backgroundColor: scheme.surfaceContainerHighest,
+                                  color: t.binFull ? Colors.redAccent : Colors.cyanAccent,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          width: 60,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
+                            color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            t.binDistanceCm > 0 ? '${t.binDistanceCm.toStringAsFixed(1)} cm' : '— cm',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, fontFamily: 'monospace'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -442,34 +473,6 @@ class MonitorScreen extends StatelessWidget {
             minHeight: 8,
             backgroundColor: scheme.surfaceContainerHighest,
             color: dir != 0 ? Colors.cyanAccent : Colors.grey,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _distanceBar(String label, double cm, ColorScheme scheme) {
-    final invalid = cm < 0 || !cm.isFinite;
-    final pct = invalid ? 0.0 : (cm / 200.0).clamp(0.0, 1.0);
-    final color = invalid ? Colors.grey : cm < 30 ? Colors.redAccent : cm < 60 ? Colors.amber : Colors.greenAccent;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            Text(invalid ? 'No Echo' : '${cm.toStringAsFixed(1)} cm', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-          ],
-        ),
-        const SizedBox(height: 4),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: LinearProgressIndicator(
-            value: pct,
-            minHeight: 6,
-            backgroundColor: scheme.surfaceContainerHighest,
-            color: color,
           ),
         ),
       ],
