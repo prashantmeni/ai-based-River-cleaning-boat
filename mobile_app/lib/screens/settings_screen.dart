@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:convert';
+import 'package:flutter_bluetooth_serial/flutter_bluetooth_serial.dart';
 
 import '../services/app_settings.dart';
 import '../services/connection_service.dart';
@@ -23,6 +24,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _obscurePass = true;
   bool _provisioning = false;
   bool _discovering = false;
+  BluetoothDevice? _selectedDevice;
+  List<BluetoothDiscoveryResult> _discoveredDevices = [];
 
   @override
   void initState() {
@@ -106,6 +109,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() => _savedMsg = 'No CAM stream found on the local network.');
     }
     setState(() => _discovering = false);
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (mounted) setState(() => _savedMsg = '');
+  }
+
+  Future<void> _scanBluetooth() async {
+    final svc = ConnectionService.instance;
+    setState(() => _discovering = true);
+    _discoveredDevices = [];
+    setState(() {});
+    final devices = await svc.scanBluetooth();
+    setState(() {
+      _discoveredDevices = devices;
+      _discovering = false;
+    });
+    if (devices.isEmpty && mounted) {
+      setState(() => _savedMsg = 'No Bluetooth devices found.');
+    } else if (mounted) {
+      setState(() => _savedMsg = 'Found ${devices.length} device(s).');
+    }
     await Future<void>.delayed(const Duration(seconds: 2));
     if (mounted) setState(() => _savedMsg = '');
   }
@@ -370,6 +392,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Bluetooth Device Selection Card
+        _modernCard(
+          context,
+          title: 'BLUETOOTH DEVICE (ESP32 SPP)',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Pair your phone with the ESP32-CAM (device name: RiverClean-Boat) '
+                'in your phone Bluetooth settings, then select it here.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: _discovering ? null : _scanBluetooth,
+                      icon: _discovering
+                          ? const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.bluetooth, size: 16),
+                      label: Text(_discovering ? 'Scanning…' : 'Scan for ESP32-CAM'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _selectedDevice == null ? null : () async {
+                        await ConnectionService.instance.selectDevice(_selectedDevice!);
+                        setState(() => _savedMsg = 'Bluetooth device saved.');
+                      },
+                      icon: const Icon(Icons.device_hub, size: 16),
+                      label: const Text('Connect Selected'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (_discoveredDevices.isNotEmpty) ...[
+                const Text(
+                  'Available Devices:',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                const SizedBox(height: 6),
+                ..._discoveredDevices.map((d) {
+                  return ListTile(
+                    leading: const Icon(Icons.devices, color: Colors.cyanAccent),
+                    title: Text(d.device.name ?? 'Unknown'),
+                    subtitle: Text(d.device.address),
+                    trailing: _selectedDevice?.address == d.device.address
+                        ? const Icon(Icons.check, color: Colors.greenAccent)
+                        : null,
+                    onTap: () => setState(() => _selectedDevice = d.device),
+                    contentPadding: EdgeInsets.zero,
+                  );
+                }).toList(),
+              ],
+              if (_selectedDevice != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Selected: ${_selectedDevice!.name ?? _selectedDevice!.address}',
+                    style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontFamily: 'monospace'),
+                  ),
+                ),
+              if (_savedMsg.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _savedMsg,
+                    style: TextStyle(fontSize: 11, color: Colors.greenAccent, fontFamily: 'monospace'),
+                  ),
+                ),
             ],
           ),
         ),
