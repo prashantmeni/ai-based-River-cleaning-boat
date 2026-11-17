@@ -79,7 +79,7 @@
 #define OBSTACLE_WARN_CM           30
 #define OBSTACLE_STOP_CM           15
 #define US_HYSTERESIS_CM           3
-#define BIN_FULL_THRESHOLD_CM      12.0f  /* collection bin full if debris distance < 12cm */
+#define BIN_FULL_THRESHOLD_CM      7.5f   /* collection bin full if debris distance < 7.5cm */
 
 /* --- GPS (UART1) --- */
 #define GPS_UART_RX_GPIO           4    /* <- GPS TX (NMEA @9600) */
