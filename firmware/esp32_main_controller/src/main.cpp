@@ -406,6 +406,7 @@ void setup() {
 
     /* Bluetooth Classic SPP for phone app communication */
     SerialBT.begin("RiverClean-Boat");
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
     Serial.println("[MAIN] Bluetooth Classic SPP started: RiverClean-Boat");
 
     /* MQTT setup */
